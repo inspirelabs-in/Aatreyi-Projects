@@ -27,7 +27,6 @@ async def authenticate(client: TelegramClient) -> TelegramClient:
     try:
         await client.send_code_request(settings.PHONE_NUMBER)
         logger.info("OTP sent to %s", settings.PHONE_NUMBER)
-
         code = input("Enter the OTP code sent to your Telegram: ").strip()
 
         try:

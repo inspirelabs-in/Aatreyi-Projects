@@ -2,8 +2,8 @@ import logging
 import sys
 from pathlib import Path
 
-
-from app.config.constants import LOG_FORMAT, LOG_DATE_FORMAT
+LOG_FORMAT = "%(asctime)s | %(name)-20s | %(levelname)-8s | %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def setup_logger(name: str = __name__, log_dir: Path | str = "data/logs") -> logging.Logger:

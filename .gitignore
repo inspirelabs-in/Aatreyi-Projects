@@ -4,9 +4,8 @@ __pycache__/
 *.so
 .env
 data/sessions/
-data/database/*.db
 data/logs/
-logs/
 *.session
 *.session-journal
+*.db
 .DS_Store

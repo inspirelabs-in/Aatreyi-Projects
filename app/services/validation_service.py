@@ -1,111 +1,64 @@
-from datetime import datetime
 from statistics import mean
 from typing import Any
 
-
-from app.config.constants import SUMMARY_SEPARATOR
-from app.utils.exceptions import ValidationError
 from app.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+MIN_POSTS_REQUIRED = 50
+
 
 class ValidationService:
-    def __init__(self):
-        self.results: dict[str, Any] = {}
-
-    async def validate(
+    def validate(
         self,
-        channel_data: dict[str, Any],
-        subscriber_count: int | None,
+        channel_exists: bool,
+        subscriber_count: int,
         posts: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        logger.info("Running Validation Checks")
-        all_passed = True
+        logger.info("Running validation checks")
+        result: dict[str, bool | int | str] = {}
+        checks_passed = 0
+        total_checks = 4
 
-        if not channel_data or not channel_data.get("channel_id"):
-            self.results["channel_exists"] = False
-            all_passed = False
-            logger.error("Validation Check 1 FAILED: Channel does not exist")
+        # Check 1: Channel exists
+        if channel_exists:
+            result["channel_exists"] = True
+            checks_passed += 1
+            logger.info("CHECK 1/4 PASSED: Channel exists")
         else:
-            self.results["channel_exists"] = True
-            logger.info("Validation Check 1 PASSED: Channel exists")
+            result["channel_exists"] = False
+            logger.error("CHECK 1/4 FAILED: Channel does not exist")
 
-        self.results["subscriber_count"] = subscriber_count or 0
-        if not subscriber_count or subscriber_count <= 0:
-            self.results["subscribers_exist"] = False
-            all_passed = False
-            logger.error("Validation Check 2 FAILED: Subscriber count unavailable")
+        # Check 2: Subscriber count available
+        if subscriber_count > 0:
+            result["subscriber_count"] = subscriber_count
+            checks_passed += 1
+            logger.info("CHECK 2/4 PASSED: Subscribers = %d", subscriber_count)
         else:
-            self.results["subscribers_exist"] = True
-            logger.info("Validation Check 2 PASSED: Subscriber count: %d", subscriber_count)
+            result["subscriber_count"] = 0
+            logger.error("CHECK 2/4 FAILED: No subscriber count")
 
-        self.results["post_count"] = len(posts)
-        if not posts:
-            self.results["posts_exist"] = False
-            all_passed = False
-            logger.error("Validation Check 3 FAILED: No posts fetched")
+        # Check 3: Minimum 50 posts
+        post_count = len(posts)
+        if post_count >= MIN_POSTS_REQUIRED:
+            result["posts_collected"] = post_count
+            result["minimum_posts_met"] = True
+            checks_passed += 1
+            logger.info("CHECK 3/4 PASSED: %d posts collected", post_count)
         else:
-            self.results["posts_exist"] = True
-            logger.info("Validation Check 3 PASSED: Posts fetched: %d", len(posts))
+            result["posts_collected"] = post_count
+            result["minimum_posts_met"] = False
+            logger.error("CHECK 3/4 FAILED: Only %d posts (need %d)", post_count, MIN_POSTS_REQUIRED)
 
-        timestamps = [
-            p["timestamp"] for p in posts if p.get("timestamp")
-        ]
+        # Check 4: Date range available
+        timestamps = [p["timestamp"] for p in posts if p.get("timestamp")]
         if len(timestamps) >= 2:
-            self.results["date_range"] = {
-                "earliest": min(timestamps).strftime("%Y-%m-%d"),
-                "latest": max(timestamps).strftime("%Y-%m-%d"),
-            }
-            self.results["date_range_available"] = True
-            logger.info("Validation Check 4 PASSED: Date range available")
+            result["date_range_earliest"] = min(timestamps).strftime("%Y-%m-%d")
+            result["date_range_latest"] = max(timestamps).strftime("%Y-%m-%d")
+            checks_passed += 1
+            logger.info("CHECK 4/4 PASSED: %s -> %s", result["date_range_earliest"], result["date_range_latest"])
         else:
-            self.results["date_range_available"] = False
-            all_passed = False
-            logger.error("Validation Check 4 FAILED: Insufficient date data")
+            logger.error("CHECK 4/4 FAILED: Insufficient timestamp data")
 
-        views = [p["views"] for p in posts if p.get("views", 0) > 0]
-        if views:
-            self.results["avg_views"] = round(mean(views))
-            self.results["avg_views_calculable"] = True
-            logger.info("Validation Check 5 PASSED: Avg views: %d", self.results["avg_views"])
-        else:
-            self.results["avg_views_calculable"] = False
-            all_passed = False
-            logger.error("Validation Check 5 FAILED: Views data unavailable")
-
-        reactions_available = any(p.get("reactions") for p in posts if p.get("reactions"))
-        self.results["reactions_available"] = reactions_available
-        if reactions_available:
-            logger.info("Validation Check 6 PASSED: Reaction data available")
-        else:
-            logger.warning("Validation Check 6: No reaction data found (may be normal)")
-
-        self.results["all_passed"] = all_passed
-        self._print_summary()
-        return self.results
-
-    def _print_summary(self):
-        print(f"\n{SUMMARY_SEPARATOR}")
-        print(f"Channel: {self.results.get('channel_title', 'N/A')}")
-        print(f"Subscribers: {self.results.get('subscriber_count', 'N/A')}")
-        print(f"Posts: {self.results.get('post_count', 0)}")
-
-        dr = self.results.get("date_range")
-        if dr:
-            print(f"Date Range:\n{dr['earliest']} -> {dr['latest']}")
-
-        if self.results.get("avg_views_calculable"):
-            print(f"Average Views:\n{self.results.get('avg_views')}")
-
-        print(f"Reaction Data:\n{'Available' if self.results.get('reactions_available') else 'Not Available'}")
-
-        print(f"\nStatus:")
-        if self.results.get("all_passed"):
-            print("ALL CHECKS PASSED")
-        else:
-            print("VALIDATION FAILED")
-        print(f"{SUMMARY_SEPARATOR}\n")
-
-        if not self.results.get("all_passed"):
-            raise ValidationError("Validation checks failed. See summary above.")
+        result["all_passed"] = checks_passed == total_checks
+        return result
