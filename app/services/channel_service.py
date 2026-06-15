@@ -4,8 +4,11 @@ from telethon import TelegramClient
 
 from app.config.schemas import ChannelResolved
 from app.database.session import async_session_factory
+from app.services.metrics_service import MetricsService
 from app.services.storage_service import StorageService
 from app.services.validation_service import ValidationService
+from app.services.content_metrics_service import ContentMetricsService
+from app.services.engagement_service import EngagementService
 from app.telegram.fetcher import fetch_posts
 from app.telegram.resolver import resolve_channel
 from app.utils.logger import setup_logger
@@ -52,6 +55,9 @@ class ChannelService:
                     "forwards": p["forwards"],
                     "reply_count": p["reply_count"],
                     "media_type": p["media_type"],
+                    "has_link": p.get("has_link", False),
+                    "link_url": p.get("link_url"),
+                    "is_affiliate": p.get("is_affiliate", False),
                 }
                 for p in posts
             ]
@@ -60,6 +66,13 @@ class ChannelService:
             await storage.save_snapshot(resolved.channel_id, resolved.subscriber_count)
 
             logger.info("Data saved to database for %s", username)
+
+            async with async_session_factory() as metrics_session:
+                metrics_service = MetricsService(metrics_session)
+                await metrics_service.process_channel(
+                    channel_id=resolved.channel_id,
+                    subscribers=resolved.subscriber_count,
+                )
 
             validation = ValidationService()
             result = validation.validate(

@@ -3,6 +3,7 @@ import asyncio
 import sys
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from sqlalchemy import text
 
 from app.config.settings import settings
 from app.database.session import async_session_factory, engine
@@ -21,10 +22,87 @@ logger = setup_logger(__name__)
 async def init_database() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # add new columns to existing metric tables if they are missing
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS content_metrics "
+            "ADD COLUMN IF NOT EXISTS posting_consistency FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS posting_gaps JSON, "
+            "ADD COLUMN IF NOT EXISTS content_mix JSON"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS content_metrics "
+            "ADD COLUMN IF NOT EXISTS avg_reach_rate FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS median_reach_rate FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS top_reach_rate FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS bottom_reach_rate FLOAT DEFAULT 0.0"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS performance_metrics "
+            "ADD COLUMN IF NOT EXISTS average_views FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS average_reactions FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS average_forwards FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS average_replies FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS top_posts JSON, "
+            "ADD COLUMN IF NOT EXISTS bottom_posts JSON"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS growth_metrics "
+            "ADD COLUMN IF NOT EXISTS daily_growth INTEGER DEFAULT 0, "
+            "ADD COLUMN IF NOT EXISTS weekly_growth INTEGER DEFAULT 0, "
+            "ADD COLUMN IF NOT EXISTS growth_rate FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS growth_7_day FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS growth_30_day FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS growth_trend FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS trend_points JSON"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS channel_features "
+            "ADD COLUMN IF NOT EXISTS posts_per_day FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS avg_views FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS avg_reach_rate FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS avg_er FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS avg_err FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS growth_rate FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS content_mix JSON, "
+            "ADD COLUMN IF NOT EXISTS top_er_posts JSON, "
+            "ADD COLUMN IF NOT EXISTS top_err_posts JSON"
+        ))
+        # columns added by the metrics audit
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS content_metrics "
+            "ADD COLUMN IF NOT EXISTS total_posts INTEGER DEFAULT 0"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS performance_metrics "
+            "ADD COLUMN IF NOT EXISTS reaction_rate FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS forward_rate FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS reply_rate FLOAT DEFAULT 0.0, "
+            "ADD COLUMN IF NOT EXISTS engagement_rate FLOAT DEFAULT 0.0"
+        ))
+        # convert metrics tables to daily time-series snapshots: add snapshot_date,
+        # backfill it from calculated_at, drop duplicate (channel, day) rows keeping
+        # the most recent, then enforce one snapshot per channel per day. All steps
+        # are idempotent so this is safe to run on every startup.
+        for tbl in ("content_metrics", "performance_metrics", "growth_metrics", "channel_features"):
+            await conn.execute(text(f"ALTER TABLE IF EXISTS {tbl} ADD COLUMN IF NOT EXISTS snapshot_date DATE"))
+            await conn.execute(text(f"UPDATE {tbl} SET snapshot_date = calculated_at::date WHERE snapshot_date IS NULL"))
+            await conn.execute(text(f"ALTER TABLE {tbl} ALTER COLUMN snapshot_date SET DEFAULT CURRENT_DATE"))
+            await conn.execute(text(
+                f"DELETE FROM {tbl} a USING {tbl} b "
+                f"WHERE a.channel_id = b.channel_id AND a.snapshot_date = b.snapshot_date "
+                f"AND (a.calculated_at < b.calculated_at "
+                f"OR (a.calculated_at = b.calculated_at AND a.id < b.id))"
+            ))
+            await conn.execute(text(f"ALTER TABLE {tbl} ALTER COLUMN snapshot_date SET NOT NULL"))
+            await conn.execute(text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{tbl}_channel_snapshot "
+                f"ON {tbl} (channel_id, snapshot_date)"
+            ))
     logger.info("Database tables created / verified")
 
 
 async def run_once(channel: str) -> None:
+    await init_database()
     client = await get_telegram_client()
     try:
         client = await authenticate(client)
@@ -50,6 +128,7 @@ async def run_once(channel: str) -> None:
 
 
 async def run_all() -> None:
+    await init_database()
     client = await get_telegram_client()
     try:
         client = await authenticate(client)

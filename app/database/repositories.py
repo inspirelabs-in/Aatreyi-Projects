@@ -1,11 +1,11 @@
 from collections.abc import Sequence
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Channel, Post, SubscriberSnapshot, TrackedChannel
+from app.database.models import Channel, Post, SubscriberSnapshot, TrackedChannel, ContentMetrics, PerformanceMetrics, GrowthMetrics, ChannelFeatures
 from app.utils.exceptions import DatabaseError
 from app.utils.logger import setup_logger
 
@@ -71,6 +71,12 @@ class ChannelRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_username(self, username: str) -> Channel | None:
+        result = await self.session.execute(
+            select(Channel).where(Channel.username == username)
+        )
+        return result.scalar_one_or_none()
+
 
 class PostRepository:
     def __init__(self, session: AsyncSession):
@@ -104,11 +110,74 @@ class PostRepository:
         return result.scalars().all()
 
     async def count_by_channel(self, channel_id: int) -> int:
-        from sqlalchemy import func
         result = await self.session.execute(
             select(func.count(Post.post_id)).where(Post.channel_id == channel_id)
         )
         return result.scalar() or 0
+
+    async def delete_post(self, post: Post) -> None:
+        await self.session.delete(post)
+        await self.session.commit()
+
+    async def update_post(self, post: Post, values: dict[str, Any]) -> None:
+        for key, value in values.items():
+            setattr(post, key, value)
+        await self.session.commit()
+
+
+class MetricRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def _upsert_daily(self, model, data: dict[str, Any]):
+        """Insert or update the row for (channel_id, today). One snapshot per
+        channel per day: re-running collection on the same day refreshes that
+        day's row instead of appending a duplicate, while previous days remain
+        as historical time-series rows."""
+        today = date.today()
+        try:
+            result = await self.session.execute(
+                select(model).where(
+                    model.channel_id == data["channel_id"],
+                    model.snapshot_date == today,
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing:
+                for key, value in data.items():
+                    setattr(existing, key, value)
+                existing.snapshot_date = today
+                existing.calculated_at = datetime.now()
+            else:
+                existing = model(**data, snapshot_date=today)
+                self.session.add(existing)
+            await self.session.commit()
+            return existing
+        except Exception as e:
+            await self.session.rollback()
+            raise DatabaseError(f"Failed to save {model.__tablename__}: {e}")
+
+    async def upsert_content_metrics(self, data: dict[str, Any]):
+        return await self._upsert_daily(ContentMetrics, data)
+
+    async def upsert_performance_metrics(self, data: dict[str, Any]):
+        return await self._upsert_daily(PerformanceMetrics, data)
+
+    async def upsert_growth_metrics(self, data: dict[str, Any]):
+        return await self._upsert_daily(GrowthMetrics, data)
+
+    async def upsert_channel_features(self, data: dict[str, Any]):
+        return await self._upsert_daily(ChannelFeatures, data)
+
+    async def get_history(self, model, channel_id: int, limit: int = 90) -> Sequence[Any]:
+        """Return a channel's metric snapshots, newest first (time series)."""
+        result = await self.session.execute(
+            select(model)
+            .where(model.channel_id == channel_id)
+            .order_by(model.snapshot_date.desc())
+            .limit(limit)
+        )
+        return result.scalars().all()
 
 
 class SubscriberRepository:

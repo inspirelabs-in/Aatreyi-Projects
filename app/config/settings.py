@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     POST_LIMIT: int = 500
     COLLECTION_INTERVAL_HOURS: int = 6
 
+    # Metrics: rolling window of post history to analyse, and the minimum age a
+    # post must reach before its view-dependent metrics are considered settled.
+    LOOKBACK_DAYS: int = 90
+    POST_MATURITY_HOURS: int = 24
+
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     SESSION_DIR: Path = BASE_DIR / "data" / "sessions"
     LOG_DIR: Path = BASE_DIR / "data" / "logs"

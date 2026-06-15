@@ -1,4 +1,5 @@
 import asyncio
+import re
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -28,6 +29,15 @@ def _classify_media(message: Message) -> str:
     return "UNKNOWN"
 
 
+def _extract_reply_count(message: Message) -> int:
+    # For channels with a linked discussion group, msg.replies.replies holds the
+    # comment count. Plain broadcast channels have no replies object.
+    replies = getattr(message, "replies", None)
+    if replies is None:
+        return 0
+    return int(getattr(replies, "replies", 0) or 0)
+
+
 def _extract_reactions(message: Message) -> list[dict] | None:
     if not message.reactions:
         return None
@@ -43,6 +53,19 @@ def _extract_reactions(message: Message) -> list[dict] | None:
         return None
 
 
+URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
+AFFILIATE_PATTERN = re.compile(r"\b(affiliate|ref=|utm_source|amzn\.to|bit\.ly|tinyurl\.com|grbn\.in|flip\.in)\b", re.IGNORECASE)
+
+
+def _extract_link(text: str) -> str | None:
+    match = URL_PATTERN.search(text)
+    return match.group(0) if match else None
+
+
+def _is_affiliate(text: str) -> bool:
+    return bool(AFFILIATE_PATTERN.search(text))
+
+
 async def fetch_posts(client: TelegramClient, entity: Channel) -> list[dict[str, Any]]:
     limit = settings.POST_LIMIT
     logger.info("Fetching last %d posts from %s", limit, entity.title)
@@ -52,16 +75,21 @@ async def fetch_posts(client: TelegramClient, entity: Channel) -> list[dict[str,
 
     try:
         async for msg in client.iter_messages(entity, limit=limit):
+            message_text = msg.text or ""
+            link_url = _extract_link(message_text)
             data = {
                 "post_id": msg.id,
                 "channel_id": entity.id,
-                "message": msg.text or "",
+                "message": message_text,
                 "timestamp": msg.date,
                 "views": getattr(msg, "views", 0) or 0,
                 "reactions": _extract_reactions(msg),
                 "forwards": getattr(msg, "forwards", 0) or 0,
-                "reply_count": 0,
+                "reply_count": _extract_reply_count(msg),
                 "media_type": _classify_media(msg),
+                "has_link": bool(link_url),
+                "link_url": link_url,
+                "is_affiliate": _is_affiliate(message_text),
             }
             batch.append(data)
             if len(batch) >= 100:
