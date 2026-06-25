@@ -403,11 +403,16 @@ _GEN_SYSTEM_TEXT = (
     "under 1024 characters, an emoji opener, a short punchy body, and a clear CTA. "
     "No markdown headers. Match the channel's tone. Be specific and concrete to the "
     "exact topic and category — name real things, avoid generic filler. "
+    "IMPORTANT: Write ONLY about the channel's stated niche and primary topics. "
+    "Never drift to unrelated subjects (space exploration, generic news, celebrity gossip, "
+    "cooking, lifestyle, motivation quotes, or anything outside the channel's niche). "
+    "If the source article is off-topic, ignore it and write originally on the given topic. "
     'Reply ONLY as JSON: {"post_text": "...", "cta": "...", "hashtags": ["tag1","tag2"]}.'
 )
 _GEN_SYSTEM_POLL = (
     "You are a Telegram channel copywriter. Create an engaging poll for the channel. "
     "Write a short question (with an emoji) and 2-4 concise options. Match the tone. "
+    "IMPORTANT: The poll MUST be about the channel's stated niche and primary topics only. "
     'Reply ONLY as JSON: {"question": "...", "options": ["...","..."], "hashtags": ["tag1"]}.'
 )
 
@@ -445,9 +450,13 @@ _KIND_INSTRUCTION = {
 
 
 def _base_user_prompt(task: dict, dna: dict, content_item: dict | None) -> str:
+    category = dna.get("category") or "general"
+    topics = dna.get("top_topics") or []
+    topics_str = ", ".join(str(t) for t in topics[:5]) if topics else category
     p = (
         f"Topic: {task.get('topic')}\n"
-        f"Channel tone: {_tone_str(dna)} | category: {dna.get('category')}\n"
+        f"Channel niche: {category} | Primary topics ONLY: {topics_str}\n"
+        f"Channel tone: {_tone_str(dna)}\n"
     )
     kind_hint = _KIND_INSTRUCTION.get((task.get("kind") or "").lower())
     if kind_hint:
@@ -460,11 +469,34 @@ def _base_user_prompt(task: dict, dna: dict, content_item: dict | None) -> str:
     return p
 
 
-def _topic_image_url(topic: str | None) -> str:
-    """A topic-relevant image URL so photo slots produce real photo posts even
-    when no source image exists (keeps the strategy's format mix intact)."""
-    q = re.sub(r"[^a-z0-9 ]", "", (topic or "technology").lower()).strip().replace(" ", ",")
-    return f"https://source.unsplash.com/1600x900/?{q or 'technology'}"
+async def _fetch_topic_image_url(topic: str | None, category: str | None = None) -> str | None:
+    """Fetch a topic-relevant image from Pexels. Returns URL or None (caller falls back to text).
+    Requires PEXELS_API_KEY in settings; silently no-ops without one."""
+    if not settings.PEXELS_API_KEY:
+        return None
+    raw = f"{category or ''} {topic or ''}".strip() or "technology"
+    query = re.sub(r"[^a-z0-9 ]", "", raw.lower()).strip()[:100]
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.pexels.com/v1/search",
+                headers={"Authorization": settings.PEXELS_API_KEY},
+                params={"query": query, "per_page": 5, "orientation": "landscape"},
+            )
+            photos = resp.json().get("photos", [])
+            if not photos and category:
+                cat_q = re.sub(r"[^a-z0-9 ]", "", category.lower()).strip()
+                resp2 = await client.get(
+                    "https://api.pexels.com/v1/search",
+                    headers={"Authorization": settings.PEXELS_API_KEY},
+                    params={"query": cat_q, "per_page": 3},
+                )
+                photos = resp2.json().get("photos", [])
+            if photos:
+                return photos[0]["src"]["large2x"]
+    except Exception:
+        pass
+    return None
 
 
 async def _generate(task: dict, dna: dict, content_item: dict | None, is_original: bool) -> dict[str, Any]:
@@ -473,12 +505,12 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
     media_url = (content_item or {}).get("image_url")
     external_url = (content_item or {}).get("external_url")
 
-    # photo/video slots need media — if none from a source, attach a topic image
-    # so the post is still a real photo (don't silently downgrade to text). Video
-    # without real media falls back to a photo so the slot still ships visual.
+    # photo/video slots need media — fetch from Pexels when no source image.
+    # If Pexels is unconfigured or returns nothing, downgrade to text so the
+    # post still ships rather than publishing a broken photo.
     if fmt in ("photo", "video") and not media_url:
-        media_url = _topic_image_url(task.get("topic"))
-        fmt = "photo"
+        media_url = await _fetch_topic_image_url(task.get("topic"), dna.get("category"))
+        fmt = "photo" if media_url else "text"
 
     if fmt == "poll":
         raw = await chat_complete(_GEN_SYSTEM_POLL, _base_user_prompt(task, dna, content_item))

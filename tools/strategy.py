@@ -137,7 +137,7 @@ def greedy_select_slots(scores: dict[int, float], n: int, min_gap: int = SLOT_MI
 
 # ── Competitor gap topics (§ Jaccard complement) ─────────────────────────────
 def get_competitor_gap_topics(my_topics: set[str], competitors: list[dict]) -> list[str]:
-    """Themes competitors cover that we don't — used to widen content topics.
+    """Themes competitors cover that we don't  - used to widen content topics.
 
     Bare category labels ("tech", "crypto", "news"…) are dropped: they are coarse
     classifications, not content topics, and when a channel's competitor set is
@@ -169,6 +169,23 @@ def competitor_avg_er(competitors) -> float | None:
     return round(sum(ers) / len(ers), 3) if ers else None
 
 
+_HEALTHY_ER_FLOOR = 3.0
+
+
+def _aspirational_target_er(avg_er: float | None, bench_er: float | None) -> float | None:
+    """Compute an aspirational ER target: floor at 3%, at least 20% above current and
+    competitor avg, capped at 2x current so the target stays achievable."""
+    candidates = [_HEALTHY_ER_FLOOR]
+    if bench_er is not None:
+        candidates.append(bench_er * 1.2)
+    if avg_er is not None:
+        candidates.append(avg_er * 1.2)
+    aspire = max(candidates)
+    if avg_er is not None:
+        return round(min(aspire, avg_er * 2), 3)
+    return round(aspire, 3)
+
+
 def _has_valid_competitor_data(competitors: list) -> bool:
     """True only when at least one competitor has real ER data.
 
@@ -188,7 +205,7 @@ def _tactic(name, severity, why, action) -> dict:
 def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my_avg_er,
                          er_by_format: dict | None = None) -> list[dict]:
     """Diagnose WHY the channel is where it is, then prescribe an action that
-    follows from the cause — not just a label. Each tactic carries `why`
+    follows from the cause  - not just a label. Each tactic carries `why`
     (root-cause) + `action` (what to do and why it works)."""
     tactics: list[dict] = []
     bench = competitor_avg_er(competitors)
@@ -197,18 +214,18 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
         gap = f"{round(3 / avg_er, 1)}x under" if avg_er else "far under"
         tactics.append(_tactic(
             "increase_polls", "high" if avg_er < 1 else "medium",
-            why=(f"Engagement is {avg_er}% — {gap} the ~3% healthy floor. Followers see posts but "
+            why=(f"Engagement is {avg_er}%  - {gap} the ~3% healthy floor. Followers see posts but "
                  "rarely react, which means the content is passive (nothing asks them to act) and "
                  "Telegram's reach favours high-interaction channels, so low ER quietly suppresses "
-                 "future reach too — a downward spiral."),
+                 "future reach too  - a downward spiral."),
             action=("Raise poll share to ~40% of the mix. A poll needs one tap, so it converts silent "
                     "viewers into measurable engagement immediately, and the result itself sparks more "
-                    "reaction — the fastest lever to break the spiral."),
+                    "reaction  - the fastest lever to break the spiral."),
         ))
     if avg_er is not None and avg_er > 8:
         tactics.append(_tactic(
             "hold_mix", "low",
-            why=f"ER is {avg_er}% — already strong, so the current format mix is resonating.",
+            why=f"ER is {avg_er}%  - already strong, so the current format mix is resonating.",
             action="Hold the format mix; change one variable at a time so you don't break what works.",
         ))
     if subscriber_delta is not None and subscriber_delta < 0:
@@ -218,13 +235,13 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
                  "posting more often backfires: each weak, low-value post is another notification that "
                  "gives a member a reason to mute or leave."),
             action=("Applied: this plan cuts posting by 1/day and raises the bar per post (stronger hook, "
-                    "clearer payoff) until ER recovers — fewer, better posts reduce the unsubscribe trigger."),
+                    "clearer payoff) until ER recovers  - fewer, better posts reduce the unsubscribe trigger."),
         ))
     # ── retention ──
     if churn_signal:
         tactics.append(_tactic(
             "strategy_reset", "high",
-            why=("A churn spike means the audience is actively leaving — that's a value mismatch, not a "
+            why=("A churn spike means the audience is actively leaving  - that's a value mismatch, not a "
                  "tuning problem. Incremental tweaks won't fix content the audience no longer wants."),
             action=("Re-profile the audience and rebuild the topic/format plan from the formats that win "
                     "for top competitors, rather than iterating on the losing plan."),
@@ -232,7 +249,7 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
         tactics.append(_tactic(
             "re_engage", "medium",
             why=("Churning members were once interested, so winning them back is far cheaper than "
-                 "acquiring new ones — and re-engagement lifts the ER that drives reach."),
+                 "acquiring new ones  - and re-engagement lifts the ER that drives reach."),
             action="Applied: a re-engagement poll has been scheduled as the first slot of this plan to pull lapsed members back.",
         ))
     # ── benchmark vs competitors ──
@@ -240,7 +257,7 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
         mult = f"{round(bench / my_avg_er, 1)}x" if my_avg_er else "many times"
         tactics.append(_tactic(
             "close_er_gap", "high",
-            why=(f"Competitors average {bench}% ER versus your {my_avg_er}% — a {mult} gap. With a similar "
+            why=(f"Competitors average {bench}% ER versus your {my_avg_er}%  - a {mult} gap. With a similar "
                  "audience, far less reaction points to weaker hooks, CTAs, or a format mismatch for what "
                  "this niche actually rewards."),
             action=(f"Reverse-engineer the top competitor's highest-ER posts (hook, length, media, CTA), "
@@ -250,7 +267,7 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
     if top and (top.get("avg_er") or 0) > (my_avg_er or 0):
         tactics.append(_tactic(
             "mirror_format", "medium",
-            why=(f"@{top.get('username')} leads the set at {top.get('avg_er')}% ER — in this niche their "
+            why=(f"@{top.get('username')} leads the set at {top.get('avg_er')}% ER  - in this niche their "
                  "dominant format is what the audience rewards most."),
             action="Replicate their top-performing format for 2 weeks and measure the ER lift before scaling it.",
         ))
@@ -268,7 +285,7 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
         tactics.append(_tactic(
             "similarity_content_mirror", "high",
             why=(f"@{best.get('username')} shares {ts_pct}% topic overlap with your channel "
-                 f"and outperforms at {best.get('avg_er')}% ER vs your {my_avg_er}% — "
+                 f"and outperforms at {best.get('avg_er')}% ER vs your {my_avg_er}%  - "
                  f"a direct niche peer beating you with similar content."),
             action=(f"Study @{best.get('username')}'s top posts: hook style, length, format, and CTA. "
                     f"Mirror those patterns for 2 weeks to isolate the ER lift before scaling."),
@@ -277,17 +294,17 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
     # ── self-benchmark fallback ───────────────────────────────────────────────
     # When no competitor has usable ER data (names found but handles unresolved,
     # or competitor agent hasn't run yet), fall back to the channel's own format
-    # performance — the highest-ER format from DNA is the best signal available.
+    # performance  - the highest-ER format from DNA is the best signal available.
     if not _has_valid_competitor_data(competitors) and er_by_format and my_avg_er is not None:
         top_fmt = max(er_by_format, key=er_by_format.get)
         top_fmt_er = round(er_by_format[top_fmt], 2)
         if top_fmt_er > my_avg_er:
-            mult = round(top_fmt_er / my_avg_er, 1) if my_avg_er else "—"
+            mult = round(top_fmt_er / my_avg_er, 1) if my_avg_er else "n/a"
             tactics.append(_tactic(
                 "self_benchmark_boost", "medium",
                 why=(f"No competitor ER data is available yet (competitors discovered but handles "
                      f"unresolved). Self-benchmarking instead: '{top_fmt}' posts average "
-                     f"{top_fmt_er}% ER on this channel — {mult}x above the channel average "
+                     f"{top_fmt_er}% ER on this channel  - {mult}x above the channel average "
                      f"({my_avg_er}%). That's the strongest signal available."),
                 action=(f"Applied: boosted '{top_fmt}' share in the content mix to lean into your "
                         f"own best-performing format. Run competitor agent again once channels are "
@@ -302,21 +319,23 @@ def _build_competitor_insights(competitors: list[dict]) -> list[dict]:
     insights = []
     for c in sorted(competitors, key=lambda x: x.get("topic_similarity") or 0, reverse=True)[:3]:
         ts = c.get("topic_similarity")
-        if ts is None or ts < 0.3:
-            continue
-        themes = [str(t) for t in (c.get("top_themes") or [])[:4]]
         avg_er = c.get("avg_er")
+        themes = [str(t) for t in (c.get("top_themes") or [])[:4]]
+        if ts is not None:
+            rec = (
+                f"Direct niche peer ({round(ts * 100)}% overlap) - study their hook style and format mix"
+                if avg_er else
+                f"High topic overlap ({round(ts * 100)}%) - monitor for topic gaps and content patterns"
+            )
+        else:
+            rec = "Competitor discovered - run competitor agent again to get similarity and ER data"
         insights.append({
             "username": c.get("username"),
-            "topic_similarity": round(ts, 2),
+            "topic_similarity": round(ts, 2) if ts is not None else None,
             "content_similarity": round(c.get("content_similarity") or 0, 2),
             "avg_er": avg_er,
             "top_themes": themes,
-            "recommendation": (
-                f"Direct niche peer ({round(ts * 100)}% overlap) — study their hook style and format mix"
-                if avg_er else
-                f"High topic overlap ({round(ts * 100)}%) — monitor for topic gaps and content patterns"
-            ),
+            "recommendation": rec,
         })
     return insights
 
@@ -379,12 +398,12 @@ def compute_strategy(
                                    er_by_format=er_by_format)
     bench_er = competitor_avg_er(competitors)
     valid_competitor_data = _has_valid_competitor_data(competitors)
-    target_er = bench_er if (bench_er is not None and (avg_er is None or bench_er > avg_er)) else avg_er
+    target_er = _aspirational_target_er(avg_er, bench_er)
 
     # Execute close_er_gap / mirror_format: when behind competitors, lean the mix
     # into the channel's highest-ER format (measured by the Analytics agent).
     # Fallback: when no competitor ER data exists at all, self-benchmark using the
-    # channel's own best-performing format — the mix is always data-driven.
+    # channel's own best-performing format  - the mix is always data-driven.
     top_er_format = max(er_by_format, key=er_by_format.get) if er_by_format else None
     behind = bench_er is not None and avg_er is not None and bench_er > avg_er
     if behind and top_er_format:
@@ -397,7 +416,7 @@ def compute_strategy(
         if self_top_er > (avg_er or 0):
             content_mix = boost_format(content_mix, top_er_format)
 
-    # slot hours — engagement data is UTC-keyed; convert to the local clock so
+    # slot hours  - engagement data is UTC-keyed; convert to the local clock so
     # selected slots (and the no-data default of ~6 PM) land in audience time.
     best_hour = dna.get("best_post_hour")
     best_local = utc_hour_to_local(best_hour) if best_hour is not None else None
@@ -431,7 +450,7 @@ def compute_strategy(
 
     # Phase 2: execute retention. When there's a retention concern (churn, weak
     # engagement, or a silent community), schedule habit-loop triggers as the
-    # first slots — gated so healthy active channels keep their plain plan.
+    # first slots  - gated so healthy active channels keep their plain plan.
     retention_concern = (
         bool(churn)
         or (avg_er is not None and avg_er < 2.0)
@@ -444,8 +463,8 @@ def compute_strategy(
             risk, community_state, primary_topics[0] if primary_topics else None,
             series_day=inputs.get("series_day", 1),
         )
-        # Place one trigger per day on that day's first slot — REPLACING regular
-        # content, not adding to it — so retention posts are spread across days
+        # Place one trigger per day on that day's first slot  - REPLACING regular
+        # content, not adding to it  - so retention posts are spread across days
         # (distinct times) and don't inflate the cadence (respects reduce_frequency).
         for i, trig in enumerate(retention_triggers):
             idx = i * slots_per_day
@@ -746,7 +765,7 @@ async def get_pending_tasks_for_channel(
 
     days_ahead: if set, only return slots whose scheduled_date is within that many
     days from today. Used for ephemeral-content channels (deals/shopping) so
-    content is never generated more than N days in advance — deals expire."""
+    content is never generated more than N days in advance  - deals expire."""
     cid = uuid.UUID(str(channel_id))
     today = datetime.now(LOCAL_TZ).date()
     cutoff = today + timedelta(days=days_ahead) if days_ahead is not None else None

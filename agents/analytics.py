@@ -73,6 +73,16 @@ class AnalyticsAgent(BaseAgent):
         intel["recycle_candidates"] = recycle_candidates(posts)
         snapshot["intelligence"] = intel
 
+        # Patch subscriber_delta from high-frequency readings when snapshot comparison
+        # yields None (e.g. previous snapshot was backfilled history with no subscriber_count).
+        if snapshot.get("subscriber_delta") is None:
+            from tools.subscribers import get_subscriber_realtime
+            rt = await get_subscriber_realtime(channel_id)
+            if rt.get("delta") is not None:
+                snapshot["subscriber_delta"] = rt["delta"]
+                if snapshot.get("subscriber_delta_pct") is None:
+                    snapshot["subscriber_delta_pct"] = rt.get("delta_pct")
+
         saved = await save_analytics_snapshot(channel_id, snapshot)
 
         # trigger early strategy review on churn or ER drop

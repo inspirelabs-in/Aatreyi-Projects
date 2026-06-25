@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     # ── Supplementary analytics APIs (optional) ──────────────────────────────
     TGSTAT_API_KEY: str | None = None
     TELEMETR_API_KEY: str | None = None
+    # Pexels image API for photo post thumbnails (free at pexels.com/api).
+    PEXELS_API_KEY: str | None = None
 
     # ── Content scoring defaults ─────────────────────────────────────────────
     SCORE_THRESHOLD: int = Field(default=4)
@@ -101,6 +103,7 @@ class Settings(BaseSettings):
         "GROQ_API_KEY",
         "TGSTAT_API_KEY",
         "TELEMETR_API_KEY",
+        "PEXELS_API_KEY",
         "SENTRY_DSN",
         mode="before",
     )

@@ -18,6 +18,7 @@ Endpoints (all JSON):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -75,7 +76,18 @@ async def _clear_stale_runs() -> None:
 async def lifespan(app: FastAPI):
     _init_sentry()
     await _clear_stale_runs()
+
+    from scheduler.main import build_scheduler
+    from scheduler.jobs import poll_subscribers
+
+    _scheduler = build_scheduler()
+    _scheduler.start()
+    asyncio.ensure_future(poll_subscribers())
+    log.info("Scheduler started. Jobs: %s", [j.id for j in _scheduler.get_jobs()])
+
     yield
+
+    _scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="Telegram Growth Agent API", version="0.1.0", lifespan=lifespan)
