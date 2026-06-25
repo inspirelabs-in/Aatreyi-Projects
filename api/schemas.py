@@ -41,3 +41,7 @@ class ContentSourceUpdate(BaseModel):
 class ChannelSettingsUpdate(BaseModel):
     auto_approve: bool | None = None
     score_threshold: int | None = Field(None, ge=1, le=7)
+
+
+class CompetitorHandleUpdate(BaseModel):
+    handle: str = Field(..., description="Telegram handle (with or without leading @)")

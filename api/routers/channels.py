@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_session
-from api.schemas import ChannelSettingsUpdate, ContentSourceCreate, ContentSourceUpdate, OnboardChannel
+from api.schemas import ChannelSettingsUpdate, CompetitorHandleUpdate, ContentSourceCreate, ContentSourceUpdate, OnboardChannel
 from api import services
 from db.models import Channel, ChannelStatus, Tier
 from tools.channels import get_or_create_channel
@@ -116,6 +116,37 @@ async def strategy(channel_id: str, session: AsyncSession = Depends(get_session)
 async def competitors(channel_id: str, session: AsyncSession = Depends(get_session)):
     await _require_channel(session, channel_id)
     return await services.get_competitors(session, channel_id)
+
+
+@router.patch("/{channel_id}/competitors/{competitor_key}/handle")
+async def update_competitor_handle(
+    channel_id: str,
+    competitor_key: str,
+    body: CompetitorHandleUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update the Telegram handle for a market-only competitor."""
+    import uuid as _uuid
+    from db.models import Competitor as CompetitorModel
+
+    await _require_channel(session, channel_id)
+    handle = body.handle.lstrip("@").strip()
+    if not handle:
+        raise HTTPException(status_code=422, detail="handle must not be empty")
+
+    result = await session.execute(
+        select(CompetitorModel).where(
+            CompetitorModel.channel_id == _uuid.UUID(channel_id),
+            CompetitorModel.competitor_username == competitor_key,
+        )
+    )
+    comp = result.scalar_one_or_none()
+    if comp is None:
+        raise HTTPException(status_code=404, detail="competitor not found")
+
+    comp.competitor_username = handle
+    await session.commit()
+    return {"updated": True, "competitor_username": comp.competitor_username}
 
 
 @router.get("/{channel_id}/sources")

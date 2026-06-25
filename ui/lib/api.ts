@@ -35,6 +35,11 @@ export const api = {
     req<SubscriberPoint[]>(`/api/channels/${id}/subscribers?n=${n}`),
   strategy: (id: string) => req<Strategy>(`/api/channels/${id}/strategy`),
   competitors: (id: string) => req<Competitor[]>(`/api/channels/${id}/competitors`),
+  updateCompetitorHandle: (id: string, competitorKey: string, handle: string) =>
+    req<{ updated: boolean; competitor_username: string }>(
+      `/api/channels/${id}/competitors/${encodeURIComponent(competitorKey)}/handle`,
+      { method: "PATCH", body: JSON.stringify({ handle }) },
+    ),
 
   listSources: (id: string) => req<ContentSourceRow[]>(`/api/channels/${id}/sources`),
   addSource: (id: string, url: string, name?: string, type: "rss" | "website" = "rss") =>

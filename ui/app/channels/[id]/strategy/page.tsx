@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { Strategy } from "@/lib/types";
-import { Badge, Card, ErrorBox, Spinner } from "@/components/ui";
+import { Badge, Collapsible, ErrorBox, InfoTooltip, Spinner } from "@/components/ui";
 
 export default function StrategyPage() {
   const { id } = useParams<{ id: string }>();
@@ -20,11 +20,18 @@ export default function StrategyPage() {
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Collapsible title="Strategy overview">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="font-medium text-slate-900">{data.goal}</div>
-            <div className="text-xs text-slate-500">{data.period_start} → {data.period_end} · {data.post_frequency_per_day} posts/day</div>
+            <div className="flex items-center gap-1 text-xs text-slate-500">
+              {data.period_start} → {data.period_end}
+              <span className="mx-1">·</span>
+              <span className="inline-flex items-center">
+                {data.post_frequency_per_day} posts/day
+                <InfoTooltip text="Recommended daily posting cadence based on your audience engagement patterns and competitor benchmarks." />
+              </span>
+            </div>
           </div>
           <Badge tone="blue">{data.strategy_type}</Badge>
         </div>
@@ -35,15 +42,24 @@ export default function StrategyPage() {
         )}
         {data.benchmark && data.benchmark.competitor_avg_er != null && (
           <div className="mt-2 flex flex-wrap gap-2 text-xs">
-            <Badge tone="slate">your ER {data.benchmark.my_avg_er ?? "—"}%</Badge>
-            <Badge tone="amber">competitor avg {data.benchmark.competitor_avg_er}%</Badge>
-            <Badge tone="green">target {data.benchmark.target_er ?? "—"}%</Badge>
+            <span className="inline-flex items-center">
+              <Badge tone="slate">your ER {data.benchmark.my_avg_er ?? "—"}%</Badge>
+              <InfoTooltip text="Your channel's average engagement rate over the last analytics snapshot period." />
+            </span>
+            <span className="inline-flex items-center">
+              <Badge tone="amber">competitor avg {data.benchmark.competitor_avg_er}%</Badge>
+              <InfoTooltip text="Average ER across all confirmed Telegram competitors — used to calibrate your target." />
+            </span>
+            <span className="inline-flex items-center">
+              <Badge tone="green">target {data.benchmark.target_er ?? "—"}%</Badge>
+              <InfoTooltip text="The ER target the strategy agent set for the next period based on the gap to top competitors." />
+            </span>
           </div>
         )}
-      </Card>
+      </Collapsible>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <Card title="Content mix">
+        <Collapsible title="Content mix">
           <div className="space-y-2">
             {(data.content_mix || []).map((m) => (
               <div key={m.format}>
@@ -52,16 +68,16 @@ export default function StrategyPage() {
               </div>
             ))}
           </div>
-        </Card>
+        </Collapsible>
 
-        <Card title="Focus topics">
+        <Collapsible title="Focus topics">
           <div className="flex flex-wrap gap-2">
             {(data.primary_topics || []).map((t) => <Badge key={t} tone="green">{t}</Badge>)}
           </div>
-        </Card>
+        </Collapsible>
       </div>
 
-      <Card title="🧠 Why this plan — diagnosis &amp; actions">
+      <Collapsible title="🧠 Why this plan — diagnosis &amp; actions">
         {(data.growth_tactics || []).length === 0 ? (
           <p className="text-sm text-slate-500">No issues detected — the channel is healthy; hold the current plan.</p>
         ) : (
@@ -81,17 +97,22 @@ export default function StrategyPage() {
             })}
           </ul>
         )}
-      </Card>
+      </Collapsible>
 
       {(data.competitor_insights || []).length > 0 && (
-        <Card title="Competitor insights (similarity-ranked)">
+        <Collapsible title="Competitor insights (similarity-ranked)">
           <div className="space-y-3">
             {(data.competitor_insights || []).map((c, i) => (
               <div key={i} className="rounded-lg border border-edge bg-white p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-slate-800">@{c.username}</span>
                   <Badge tone="blue">{Math.round(c.topic_similarity * 100)}% topic overlap</Badge>
-                  {c.avg_er != null && <Badge tone="green">{c.avg_er.toFixed(2)}% ER</Badge>}
+                  {c.avg_er != null && (
+                    <span className="inline-flex items-center gap-1">
+                      <Badge tone="green">{c.avg_er.toFixed(2)}% ER</Badge>
+                      <InfoTooltip text="This competitor's engagement rate — used to calibrate your target ER for the strategy period." />
+                    </span>
+                  )}
                   {c.content_similarity > 0 && (
                     <Badge tone="slate">{Math.round(c.content_similarity * 100)}% content match</Badge>
                   )}
@@ -107,10 +128,10 @@ export default function StrategyPage() {
               </div>
             ))}
           </div>
-        </Card>
+        </Collapsible>
       )}
 
-      <Card title={`Post slots (${data.tasks.length})`}>
+      <Collapsible title={`Post slots (${data.tasks.length})`}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase text-slate-500">
@@ -129,7 +150,7 @@ export default function StrategyPage() {
             </tbody>
           </table>
         </div>
-      </Card>
+      </Collapsible>
     </div>
   );
 }

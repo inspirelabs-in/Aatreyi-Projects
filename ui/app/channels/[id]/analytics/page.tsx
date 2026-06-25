@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import {
-  CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis,
+  CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { api } from "@/lib/api";
 import type { AnalyticsPoint, SubscriberPoint } from "@/lib/types";
-import { Badge, Card, ErrorBox, Spinner } from "@/components/ui";
+import { Badge, Collapsible, ErrorBox, InfoTooltip, Spinner } from "@/components/ui";
 
 type TimelineEntry = { date: string; type: string; note: string };
 
@@ -21,32 +21,12 @@ function buildTimeline(data: AnalyticsPoint[]): TimelineEntry[] {
   return out.slice(0, 12);
 }
 
-function useContainerWidth(ref: React.RefObject<HTMLDivElement | null>): number {
-  const [width, setWidth] = useState(700);
-  useEffect(() => {
-    if (!ref.current) return;
-    setWidth(ref.current.clientWidth || 700);
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect?.width;
-      if (w) setWidth(Math.floor(w));
-    });
-    ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, [ref]);
-  return width;
-}
-
 export default function AnalyticsPage() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<AnalyticsPoint[] | null>(null);
   const [subs, setSubs] = useState<SubscriberPoint[]>([]);
   const [error, setError] = useState("");
   const [mounted, setMounted] = useState(false);
-
-  const subRef = useRef<HTMLDivElement>(null);
-  const erRef = useRef<HTMLDivElement>(null);
-  const subWidth = useContainerWidth(subRef);
-  const erWidth = useContainerWidth(erRef);
 
   useEffect(() => {
     setMounted(true);
@@ -82,7 +62,7 @@ export default function AnalyticsPage() {
         <p className="text-sm text-slate-500">Analytics is a byproduct of agent execution — these are the signals the Analytics Agent surfaced and the Strategy Agent acts on.</p>
       </div>
 
-      <Card title="Insight timeline">
+      <Collapsible title="Insight timeline">
         {timeline.length === 0 ? (
           <p className="text-sm text-slate-500">No agent insights yet. Run the Analytics agent.</p>
         ) : (
@@ -104,19 +84,19 @@ export default function AnalyticsPage() {
             ))}
           </ul>
         )}
-      </Card>
+      </Collapsible>
 
       <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Supporting visuals (agent-derived)</p>
 
-      <Card title="Subscriber growth (live - sampled every ~20 min)">
-        <div ref={subRef} className="w-full">
-          {!mounted || subChart.length === 0 ? (
-            <p className="text-sm text-slate-500">
-              Collecting live subscriber samples... the poller records the count every ~20 min.
-              Telegram does not expose historical counts, so this chart builds up from now.
-            </p>
-          ) : (
-            <LineChart width={subWidth} height={256} data={subChart} margin={{ top: 10, right: 20, bottom: 20, left: 0 }}>
+      <Collapsible title="Subscriber growth (live — sampled every ~20 min)">
+        {!mounted || subChart.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            Collecting live subscriber samples... the poller records the count every ~20 min.
+            Telegram does not expose historical counts, so this chart builds up from now.
+          </p>
+        ) : (
+          <ResponsiveContainer width="100%" height={256}>
+            <LineChart data={subChart} margin={{ top: 10, right: 20, bottom: 20, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="t" stroke="#94a3b8" fontSize={10} interval="preserveStartEnd" tick={{ dy: 6 }} />
               <YAxis
@@ -130,20 +110,20 @@ export default function AnalyticsPage() {
               <Tooltip contentStyle={tooltipStyle} />
               <Line type="monotone" dataKey="subscribers" stroke="#2563eb" strokeWidth={2} dot={false} />
             </LineChart>
-          )}
-        </div>
-      </Card>
+          </ResponsiveContainer>
+        )}
+      </Collapsible>
 
-      <Card title="Engagement rate (%)">
-        <div ref={erRef} className="w-full">
-          {!mounted ? (
-            <p className="text-sm text-slate-500">Loading...</p>
-          ) : !hasErData ? (
-            <p className="text-sm text-slate-500">
-              No engagement rate data yet — the Analytics agent needs at least one run with real post data.
-            </p>
-          ) : (
-            <LineChart width={erWidth} height={224} data={chart} margin={{ top: 10, right: 20, bottom: 20, left: 0 }}>
+      <Collapsible title={<span className="flex items-center gap-1">Engagement rate (%)<InfoTooltip text="Average engagement rate per snapshot period: (reactions + forwards) ÷ views × 100. A higher ER means posts are resonating with the audience." /></span>}>
+        {!mounted ? (
+          <p className="text-sm text-slate-500">Loading...</p>
+        ) : !hasErData ? (
+          <p className="text-sm text-slate-500">
+            No engagement rate data yet — the Analytics agent needs at least one run with real post data.
+          </p>
+        ) : (
+          <ResponsiveContainer width="100%" height={224}>
+            <LineChart data={chart} margin={{ top: 10, right: 20, bottom: 20, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} interval="preserveStartEnd" tick={{ dy: 6 }} />
               <YAxis
@@ -160,11 +140,11 @@ export default function AnalyticsPage() {
               />
               <Line type="monotone" dataKey="er" stroke="#16a34a" strokeWidth={2} dot={false} />
             </LineChart>
-          )}
-        </div>
-      </Card>
+          </ResponsiveContainer>
+        )}
+      </Collapsible>
 
-      <Card title="Snapshots">
+      <Collapsible title="Snapshots">
         {(() => {
           const rows = [...data].reverse();
           const hasSubs = data.some((d) => d.subscriber_count != null);
@@ -178,9 +158,21 @@ export default function AnalyticsPage() {
                     <tr className="border-b border-edge">
                       <th className="py-2 pr-3 text-left">Date</th>
                       {hasSubs && <th className="px-3 py-2 text-right">Subs</th>}
-                      {hasSubs && <th className="px-3 py-2 text-right">Delta</th>}
+                      {hasSubs && (
+                        <th className="px-3 py-2 text-right">
+                          <span className="inline-flex items-center">
+                            Delta
+                            <InfoTooltip text="Daily subscriber change (positive = growth, negative = churn). Derived from live samples taken every ~20 min." />
+                          </span>
+                        </th>
+                      )}
                       <th className="px-3 py-2 text-right">Views</th>
-                      <th className="px-3 py-2 text-right">ER</th>
+                      <th className="px-3 py-2 text-right">
+                        <span className="inline-flex items-center">
+                          ER
+                          <InfoTooltip text="Engagement rate: (reactions + forwards) ÷ views × 100. Measures how actively the audience responds to content." />
+                        </span>
+                      </th>
                       <th className="px-3 py-2 text-right">Posts</th>
                       {hasChurn && <th className="px-3 py-2 text-right">Churn</th>}
                     </tr>
@@ -212,7 +204,7 @@ export default function AnalyticsPage() {
             </>
           );
         })()}
-      </Card>
+      </Collapsible>
     </div>
   );
 }
