@@ -4,6 +4,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+# Accept API base URL at build time (empty = relative /api calls via nginx)
+ARG NEXT_PUBLIC_API_BASE=""
+ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
 RUN npm run build
 
 # Production stage

@@ -88,13 +88,19 @@ def _parse_proxy(raw: str | None):
 def build_client(**kwargs) -> TelegramClient:
     """Construct (but do not connect) a Telethon client from settings.
 
-    Uses _RobustSQLiteSession so concurrent API + scheduler access to the same
-    session file uses WAL mode and a 30s busy timeout instead of failing immediately.
+    Prefers TG_SESSION_STRING env var (cloud/Railway/Render deploy) over the
+    local .session file. Falls back to _RobustSQLiteSession for local dev.
     """
+    from telethon.sessions import StringSession
+    session_str = getattr(settings, "TG_SESSION_STRING", None)
+    if session_str:
+        session = StringSession(session_str)
+    else:
+        session = _RobustSQLiteSession(settings.TELETHON_SESSION)
     client_kwargs = _parse_proxy(settings.TELEGRAM_PROXY)
     client_kwargs.update(kwargs)
     return TelegramClient(
-        _RobustSQLiteSession(settings.TELETHON_SESSION),
+        session,
         settings.TELEGRAM_API_ID,
         settings.TELEGRAM_API_HASH,
         **client_kwargs,

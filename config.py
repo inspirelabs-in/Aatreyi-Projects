@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     # How often to sample subscriber counts (minutes) — near-real-time growth.
     SUBSCRIBER_POLL_INTERVAL_MIN: int = Field(default=10)
 
+    # ── Deployment ────────────────────────────────────────────────────────────
+    # Comma-separated CORS origins. Set to "*" in production behind nginx.
+    ALLOWED_ORIGINS: str | None = None
+    # Telethon string session (alternative to the .session file for cloud deploy).
+    # Generate with: python -m tools.export_session
+    TG_SESSION_STRING: str | None = None
+
     # ── Monitoring (optional) ─────────────────────────────────────────────────
     SENTRY_DSN: str | None = None
 
