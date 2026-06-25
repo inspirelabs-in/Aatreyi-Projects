@@ -6,7 +6,7 @@ against db.models -> Base.metadata.
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 from config import settings
 from db.base import Base
@@ -40,6 +40,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # Fail fast on lock contention instead of hanging forever. Another service
+        # (e.g. the scheduler) holding a lock on a table we ALTER would otherwise
+        # block the migration — and thus the API startup — indefinitely.
+        connection.execute(text("SET lock_timeout = '15s'"))
+        connection.execute(text("SET statement_timeout = '60s'"))
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
