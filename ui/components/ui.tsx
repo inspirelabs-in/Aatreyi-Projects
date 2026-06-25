@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 
 export function Card({ title, children, className = "" }: { title?: string; children: React.ReactNode; className?: string }) {
   return (
@@ -50,20 +50,41 @@ export function ErrorBox({ error }: { error: string }) {
 
 export function InfoTooltip({ text }: { text: string }) {
   const [show, setShow] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  function openTooltip() {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setCoords({ top: r.top - 8, left: r.left + r.width / 2 });
+      setShow(true);
+    }
+  }
+
   return (
-    <span className="relative inline-flex">
+    <span className="inline-flex">
       <button
+        ref={btnRef}
         type="button"
-        onMouseEnter={() => setShow(true)}
+        onMouseEnter={openTooltip}
         onMouseLeave={() => setShow(false)}
-        onClick={() => setShow((s) => !s)}
+        onClick={() => (show ? setShow(false) : openTooltip())}
         className="ml-1 inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-400 hover:bg-slate-200 focus:outline-none"
         aria-label="More info"
       >
         i
       </button>
       {show && (
-        <span className="absolute bottom-full left-1/2 z-20 mb-2 w-56 -translate-x-1/2 rounded-lg border border-edge bg-white px-3 py-2 text-xs leading-snug text-slate-600 shadow-lg">
+        <span
+          style={{
+            position: "fixed",
+            top: coords.top,
+            left: coords.left,
+            transform: "translate(-50%, -100%)",
+            zIndex: 9999,
+          }}
+          className="w-56 rounded-lg border border-edge bg-white px-3 py-2 text-xs leading-snug text-slate-600 shadow-lg"
+        >
           {text}
         </span>
       )}
