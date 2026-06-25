@@ -35,8 +35,9 @@ export function RoleBar() {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-6 py-3">
-      <Link href={role === "admin" ? "/admin" : "/"} className="text-lg font-semibold text-slate-900">
-        🧠 GrowthOS
+      <Link href={role === "admin" ? "/admin" : "/"} className="flex items-center gap-2">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-sm font-bold text-white shadow-sm">G</span>
+        <span className="text-base font-bold tracking-tight text-slate-900">GrowthOS</span>
       </Link>
 
       {mounted && (

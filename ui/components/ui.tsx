@@ -49,14 +49,24 @@ export function ErrorBox({ error }: { error: string }) {
 }
 
 export function InfoTooltip({ text }: { text: string }) {
+  const [show, setShow] = useState(false);
   return (
-    <span className="group relative inline-flex">
-      <span className="ml-1 inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-400 hover:bg-slate-200">
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        onClick={() => setShow((s) => !s)}
+        className="ml-1 inline-flex h-4 w-4 cursor-pointer items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-400 hover:bg-slate-200 focus:outline-none"
+        aria-label="More info"
+      >
         i
-      </span>
-      <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-56 -translate-x-1/2 rounded-lg border border-edge bg-white px-3 py-2 text-xs leading-snug text-slate-600 shadow-lg group-hover:block">
-        {text}
-      </span>
+      </button>
+      {show && (
+        <span className="absolute bottom-full left-1/2 z-20 mb-2 w-56 -translate-x-1/2 rounded-lg border border-edge bg-white px-3 py-2 text-xs leading-snug text-slate-600 shadow-lg">
+          {text}
+        </span>
+      )}
     </span>
   );
 }
