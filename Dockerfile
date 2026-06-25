@@ -16,4 +16,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["sh", "-c", "echo '=== alembic start ===' && python -m alembic upgrade head && echo '=== alembic done ===' && echo '=== importing app ===' && python -c 'import api.main; print(\"import OK\")' && echo '=== starting uvicorn ===' && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "start.sh"]
