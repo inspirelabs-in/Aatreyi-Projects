@@ -144,12 +144,19 @@ def get_competitor_gap_topics(my_topics: set[str], competitors: list[dict]) -> l
     off-niche they would otherwise pollute an unrelated channel's plan (e.g. an
     entertainment channel getting "business/crypto" slots). Only specific themes
     survive as gaps; the channel's own DNA topics remain the primary source.
+
+    When topic_similarity is available (from the Competitor Intelligence agent),
+    only themes from genuinely similar competitors (≥ 0.5) are used so off-niche
+    channels don't pollute the gap list.
     """
     from tools.channel_dna import CATEGORY_KEYWORDS
 
     category_labels = set(CATEGORY_KEYWORDS.keys())
     competitor_themes: set[str] = set()
     for c in competitors or []:
+        ts = c.get("topic_similarity")
+        if ts is not None and ts < 0.5:
+            continue
         for t in (c.get("top_themes") or c.get("top_content_themes") or []):
             competitor_themes.add(str(t).lower())
     gaps = competitor_themes - {t.lower() for t in my_topics} - category_labels
@@ -248,6 +255,25 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
             action="Replicate their top-performing format for 2 weeks and measure the ER lift before scaling it.",
         ))
 
+    # ── similarity-driven mirror: high-overlap competitor beating us on ER ──────
+    similar_beating = [
+        c for c in (competitors or [])
+        if (c.get("topic_similarity") or 0) >= 0.6
+        and c.get("avg_er") is not None
+        and (c.get("avg_er") or 0) > (my_avg_er or 0)
+    ]
+    if similar_beating:
+        best = max(similar_beating, key=lambda c: c.get("avg_er") or 0)
+        ts_pct = round((best.get("topic_similarity") or 0) * 100)
+        tactics.append(_tactic(
+            "similarity_content_mirror", "high",
+            why=(f"@{best.get('username')} shares {ts_pct}% topic overlap with your channel "
+                 f"and outperforms at {best.get('avg_er')}% ER vs your {my_avg_er}% — "
+                 f"a direct niche peer beating you with similar content."),
+            action=(f"Study @{best.get('username')}'s top posts: hook style, length, format, and CTA. "
+                    f"Mirror those patterns for 2 weeks to isolate the ER lift before scaling."),
+        ))
+
     # ── self-benchmark fallback ───────────────────────────────────────────────
     # When no competitor has usable ER data (names found but handles unresolved,
     # or competitor agent hasn't run yet), fall back to the channel's own format
@@ -269,6 +295,30 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
             ))
 
     return tactics
+
+
+def _build_competitor_insights(competitors: list[dict]) -> list[dict]:
+    """Top similar competitors with actionable insights for the strategy page."""
+    insights = []
+    for c in sorted(competitors, key=lambda x: x.get("topic_similarity") or 0, reverse=True)[:3]:
+        ts = c.get("topic_similarity")
+        if ts is None or ts < 0.3:
+            continue
+        themes = [str(t) for t in (c.get("top_themes") or [])[:4]]
+        avg_er = c.get("avg_er")
+        insights.append({
+            "username": c.get("username"),
+            "topic_similarity": round(ts, 2),
+            "content_similarity": round(c.get("content_similarity") or 0, 2),
+            "avg_er": avg_er,
+            "top_themes": themes,
+            "recommendation": (
+                f"Direct niche peer ({round(ts * 100)}% overlap) — study their hook style and format mix"
+                if avg_er else
+                f"High topic overlap ({round(ts * 100)}%) — monitor for topic gaps and content patterns"
+            ),
+        })
+    return insights
 
 
 def build_diagnosis(avg_er, subscriber_delta, churn_signal, bench, tactics) -> str:
@@ -419,6 +469,7 @@ def compute_strategy(
     if bench_er is not None and avg_er is not None and bench_er > avg_er:
         goal += f". Close ER gap to competitor avg {bench_er}% (current {avg_er}%)"
     diagnosis = build_diagnosis(avg_er, sub_delta, churn, bench_er, tactics)
+    competitor_insights = _build_competitor_insights(competitors)
     return {
         "goal": goal,
         "diagnosis": diagnosis,
@@ -431,6 +482,7 @@ def compute_strategy(
             "my_avg_er": avg_er,
             "target_er": target_er,
         },
+        "competitor_insights": competitor_insights,
         "retention_plan": retention_triggers,
         "fatigue": fatigue,
         "period_start": ps.isoformat(),
@@ -518,6 +570,7 @@ async def save_strategy(channel_id: str | uuid.UUID, strategy_payload: dict) -> 
                 "diagnosis": strategy_payload.get("diagnosis"),
                 "benchmark": strategy_payload.get("benchmark"),
                 "fatigue": strategy_payload.get("fatigue"),
+                "competitor_insights": strategy_payload.get("competitor_insights"),
             },
             status=StrategyStatus.active,
         )
@@ -822,7 +875,13 @@ async def load_strategy_inputs(channel_id: str | uuid.UUID) -> dict[str, Any]:
         "recycle_candidates": recycle_candidates,
         "series_day": series_count + 1,
         "competitors": [
-            {"username": c.competitor_username, "avg_er": c.avg_er, "top_themes": c.top_content_themes}
+            {
+                "username": c.competitor_username,
+                "avg_er": c.avg_er,
+                "top_themes": c.top_content_themes,
+                "topic_similarity": c.topic_similarity,
+                "content_similarity": c.content_similarity,
+            }
             for c in comps
         ],
     }

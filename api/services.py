@@ -184,6 +184,7 @@ async def get_strategy(session: AsyncSession, channel_id: str) -> dict | None:
         "diagnosis": (strat.analysis or {}).get("diagnosis"),
         "benchmark": (strat.analysis or {}).get("benchmark"),
         "fatigue": (strat.analysis or {}).get("fatigue"),
+        "competitor_insights": (strat.analysis or {}).get("competitor_insights") or [],
         "period_start": strat.period_start.isoformat() if strat.period_start else None,
         "period_end": strat.period_end.isoformat() if strat.period_end else None,
         "tasks": [
@@ -358,11 +359,9 @@ async def build_control_state(session: AsyncSession, channel_id: str) -> dict:
     delta_pct = rt["delta_pct"] if rt["delta_pct"] is not None else daily_delta_pct
     sub_count = rt["subscriber_count"] if rt["subscriber_count"] is not None else (dna.subscriber_count if dna else None)
 
-    if delta_pct is None:
-        retention_trend = "flat"
-    elif delta_pct < 0 or churn:
+    if churn or (delta_pct is not None and delta_pct < -0.05):
         retention_trend = "down"
-    elif delta_pct > 1:
+    elif delta_pct is not None and delta_pct > 0.1:
         retention_trend = "up"
     else:
         retention_trend = "flat"

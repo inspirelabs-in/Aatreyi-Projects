@@ -81,11 +81,10 @@ async def _has_enough_history(uname: str, client) -> bool:
 
 
 async def _should_run_full(tier: str, uname: str, client) -> bool:
-    """Post-history is the criterion for the full pipeline (DNA + Analytics),
-    for EVERY tier: DNA can only profile a channel that has enough posts. A
-    channel with too few posts — regardless of subscriber count — starts lean
-    with competitors, and DNA/Analytics switch on automatically once it has
-    accumulated enough history (re-checked each cycle)."""
+    """Mid/established channels always run the full pipeline (DNA → Competitor → Analytics → Strategy).
+    New (Tier-A) channels start lean until they accumulate enough recent post history."""
+    if not is_tier_a(tier):
+        return True
     return await _has_enough_history(uname, client)
 
 
@@ -156,20 +155,21 @@ async def run_daily_cycle() -> dict:
 
 # ── Onboarding orchestrator (tier-aware initial run) ─────────────────────────
 async def onboard_channel_pipeline(channel_id: str) -> dict:
-    """Run the initial pipeline for a freshly added channel, routed by tier."""
+    """Run the initial pipeline for a freshly added channel.
+
+    Onboarding ALWAYS runs the full pipeline (DNA → Competitor → Analytics).
+    The post-history gate (_should_run_full) is for recurring scheduled cycles
+    only — at onboarding time we always want a complete initial profile.
+    """
     ctx = await get_channel_context(channel_id)
     uname = ctx.get("username")
     if not uname:
         raise ValueError(f"channel {channel_id} not found")
     async with telethon_session() as client:
         tier = await _refresh_tier(channel_id, uname, client)
-        full = await _should_run_full(tier, uname, client)
-        if full:
-            await _safe(ChannelDNAAgent("manual").run(channel_id, username=uname, client=client), f"dna/{uname}")
-            await _safe(CompetitorIntelligenceAgent("manual").run(channel_id, client=client), f"competitor/{uname}")
-            await _safe(AnalyticsAgent("daily", trigger="manual").run(channel_id, username=uname, client=client), f"analytics/{uname}")
-        else:
-            await _safe(CompetitorIntelligenceAgent("manual").run(channel_id, client=client), f"competitor/{uname}")
+        await _safe(ChannelDNAAgent("manual").run(channel_id, username=uname, client=client), f"dna/{uname}")
+        await _safe(CompetitorIntelligenceAgent("manual").run(channel_id, client=client), f"competitor/{uname}")
+        await _safe(AnalyticsAgent("daily", trigger="manual").run(channel_id, username=uname, client=client), f"analytics/{uname}")
         # Fetch posts once — reused for backfill AND source auto-detection.
         channel_info = await _safe(get_telegram_channel_info(client, uname), f"info/{uname}") or {}
         channel_posts = (await _safe(get_channel_posts(client, uname, days=30), f"posts/{uname}") or {}).get("posts", [])
@@ -187,7 +187,7 @@ async def onboard_channel_pipeline(channel_id: str) -> dict:
         # real post in its strategy-given format.
         generated = await _safe(generate_content_for_strategy(channel_id, client), f"content/{uname}")
     await update_channel_meta(channel_id, status=ChannelStatus.active)
-    return {"tier": tier, "pipeline": "full" if full else "lean",
+    return {"tier": tier, "pipeline": "full",
             "content_generated": (generated or {}).get("generated", 0)}
 
 

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import {
-  CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { api } from "@/lib/api";
 import type { AnalyticsPoint, SubscriberPoint } from "@/lib/types";
@@ -21,12 +21,32 @@ function buildTimeline(data: AnalyticsPoint[]): TimelineEntry[] {
   return out.slice(0, 12);
 }
 
+function useContainerWidth(ref: React.RefObject<HTMLDivElement | null>): number {
+  const [width, setWidth] = useState(700);
+  useEffect(() => {
+    if (!ref.current) return;
+    setWidth(ref.current.clientWidth || 700);
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width;
+      if (w) setWidth(Math.floor(w));
+    });
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, [ref]);
+  return width;
+}
+
 export default function AnalyticsPage() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<AnalyticsPoint[] | null>(null);
   const [subs, setSubs] = useState<SubscriberPoint[]>([]);
   const [error, setError] = useState("");
   const [mounted, setMounted] = useState(false);
+
+  const subRef = useRef<HTMLDivElement>(null);
+  const erRef = useRef<HTMLDivElement>(null);
+  const subWidth = useContainerWidth(subRef);
+  const erWidth = useContainerWidth(erRef);
 
   useEffect(() => {
     setMounted(true);
@@ -42,7 +62,7 @@ export default function AnalyticsPage() {
     date: d.period_end?.slice(5) ?? "",
     er: d.avg_er ?? 0,
   }));
-  // real subscriber samples (every ~20 min) — the live, updating growth series
+
   const subChart = subs
     .filter((s) => s.subscriber_count != null)
     .map((s) => ({
@@ -52,6 +72,8 @@ export default function AnalyticsPage() {
 
   const timeline = buildTimeline(data);
   const hasErData = chart.some((d) => d.er > 0);
+
+  const tooltipStyle = { background: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 8, color: "#0f172a" };
 
   return (
     <div className="space-y-4">
@@ -87,43 +109,59 @@ export default function AnalyticsPage() {
       <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Supporting visuals (agent-derived)</p>
 
       <Card title="Subscriber growth (live - sampled every ~20 min)">
-        {!mounted || subChart.length === 0 ? (
-          <p className="text-sm text-slate-500">
-            Collecting live subscriber samples... the poller records the count every ~20 min.
-            Telegram does not expose historical counts, so this chart builds up from now.
-          </p>
-        ) : (
-          <ResponsiveContainer width="100%" height={256}>
-            <LineChart data={subChart}>
+        <div ref={subRef} className="w-full">
+          {!mounted || subChart.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              Collecting live subscriber samples... the poller records the count every ~20 min.
+              Telegram does not expose historical counts, so this chart builds up from now.
+            </p>
+          ) : (
+            <LineChart width={subWidth} height={256} data={subChart} margin={{ top: 10, right: 20, bottom: 20, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey="t" stroke="#94a3b8" fontSize={11} />
-              <YAxis stroke="#94a3b8" fontSize={12} domain={["auto", "auto"]} width={60} />
-              <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 8, color: "#0f172a" }} />
+              <XAxis dataKey="t" stroke="#94a3b8" fontSize={10} interval="preserveStartEnd" tick={{ dy: 6 }} />
+              <YAxis
+                stroke="#94a3b8"
+                fontSize={11}
+                width={52}
+                tickCount={5}
+                domain={["auto", "auto"]}
+                tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+              />
+              <Tooltip contentStyle={tooltipStyle} />
               <Line type="monotone" dataKey="subscribers" stroke="#2563eb" strokeWidth={2} dot={false} />
             </LineChart>
-          </ResponsiveContainer>
-        )}
+          )}
+        </div>
       </Card>
 
       <Card title="Engagement rate (%)">
-        {!mounted ? null : !hasErData ? (
-          <p className="text-sm text-slate-500">
-            No engagement rate data yet — the Analytics agent needs at least one run with real post data.
-          </p>
-        ) : (
-          <ResponsiveContainer width="100%" height={224}>
-            <LineChart data={chart}>
+        <div ref={erRef} className="w-full">
+          {!mounted ? (
+            <p className="text-sm text-slate-500">Loading...</p>
+          ) : !hasErData ? (
+            <p className="text-sm text-slate-500">
+              No engagement rate data yet — the Analytics agent needs at least one run with real post data.
+            </p>
+          ) : (
+            <LineChart width={erWidth} height={224} data={chart} margin={{ top: 10, right: 20, bottom: 20, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} />
-              <YAxis stroke="#94a3b8" fontSize={12} width={48} domain={[0, "dataMax + 0.5"]} />
+              <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} interval="preserveStartEnd" tick={{ dy: 6 }} />
+              <YAxis
+                stroke="#94a3b8"
+                fontSize={11}
+                width={52}
+                tickCount={5}
+                domain={[0, "dataMax + 0.5"]}
+                tickFormatter={(v: number) => `${v.toFixed(2)}%`}
+              />
               <Tooltip
                 formatter={(v: number) => [`${v.toFixed(3)}%`, "ER"]}
-                contentStyle={{ background: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 8, color: "#0f172a" }}
+                contentStyle={tooltipStyle}
               />
               <Line type="monotone" dataKey="er" stroke="#16a34a" strokeWidth={2} dot={false} />
             </LineChart>
-          </ResponsiveContainer>
-        )}
+          )}
+        </div>
       </Card>
 
       <Card title="Snapshots">
@@ -168,8 +206,7 @@ export default function AnalyticsPage() {
               </div>
               {!hasSubs && (
                 <p className="mt-3 text-xs text-slate-400">
-                  Subscriber counts and churn build up from live samples — Telegram does not expose historical subscriber numbers,
-                  so per-day deltas are not available for backfilled history. See the live growth chart above.
+                  Subscriber counts build up from live samples — per-day deltas are not available for backfilled history.
                 </p>
               )}
             </>

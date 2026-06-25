@@ -83,6 +83,33 @@ export default function StrategyPage() {
         )}
       </Card>
 
+      {(data.competitor_insights || []).length > 0 && (
+        <Card title="Competitor insights (similarity-ranked)">
+          <div className="space-y-3">
+            {(data.competitor_insights || []).map((c, i) => (
+              <div key={i} className="rounded-lg border border-edge bg-white p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-slate-800">@{c.username}</span>
+                  <Badge tone="blue">{Math.round(c.topic_similarity * 100)}% topic overlap</Badge>
+                  {c.avg_er != null && <Badge tone="green">{c.avg_er.toFixed(2)}% ER</Badge>}
+                  {c.content_similarity > 0 && (
+                    <Badge tone="slate">{Math.round(c.content_similarity * 100)}% content match</Badge>
+                  )}
+                </div>
+                {c.top_themes.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {c.top_themes.map((t) => (
+                      <span key={t} className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{t}</span>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 text-sm text-slate-600">{c.recommendation}</p>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <Card title={`Post slots (${data.tasks.length})`}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

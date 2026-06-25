@@ -58,34 +58,53 @@ export function AgentStream({ events }: { events: AgentEvent[] }) {
 }
 
 // ── CENTER: workflow pipeline visualizer ──────────────────────────────────────
-export function PipelineFlow({ pipeline }: { pipeline: PipelineAgent[] }) {
+export function PipelineFlow({ pipeline, onCancel }: { pipeline: PipelineAgent[]; onCancel?: (agent: string) => void }) {
   return (
     <div className="space-y-3">
       <h3 className="text-sm font-semibold text-slate-700">Active Agent Workflows</h3>
-      {pipeline.map((p) => <PipelineCard key={p.agent} p={p} />)}
+      {pipeline.map((p) => <PipelineCard key={p.agent} p={p} onCancel={onCancel} />)}
     </div>
   );
 }
 
-function PipelineCard({ p }: { p: PipelineAgent }) {
+function PipelineCard({ p, onCancel }: { p: PipelineAgent; onCancel?: (agent: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const tone: Record<string, string> = {
     done: "border-green-200",
     running: "border-blue-300 ring-1 ring-blue-200",
     failed: "border-red-200",
     idle: "border-edge",
   };
+
+  async function handleCancel(e: React.MouseEvent) {
+    e.stopPropagation();
+    setCancelling(true);
+    try { await onCancel?.(p.agent); } finally { setCancelling(false); }
+  }
+
   return (
     <div className={`rounded-xl border bg-panel p-4 shadow-card ${tone[p.status] ?? "border-edge"}`}>
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 text-left">
-        <span className="text-lg leading-none">{p.icon}</span>
-        <span className="font-medium text-slate-800">{p.label} Flow</span>
-        <span className={`h-2 w-2 rounded-full ${STATUS_DOT[p.status] ?? "bg-slate-300"}`} />
-        <span className="text-xs capitalize text-slate-500">{p.status}</span>
-        <span className="ml-auto text-xs text-slate-400">
-          {p.last_run ? `${ago(p.last_run)}${p.duration_ms != null ? ` · ${dur(p.duration_ms)}` : ""}` : "never run"}
-        </span>
-      </button>
+      <div className="flex w-full items-center gap-2">
+        <button onClick={() => setOpen(!open)} className="flex flex-1 items-center gap-2 text-left">
+          <span className="text-lg leading-none">{p.icon}</span>
+          <span className="font-medium text-slate-800">{p.label} Flow</span>
+          <span className={`h-2 w-2 rounded-full ${STATUS_DOT[p.status] ?? "bg-slate-300"}`} />
+          <span className="text-xs capitalize text-slate-500">{p.status}</span>
+          <span className="ml-auto text-xs text-slate-400">
+            {p.last_run ? `${ago(p.last_run)}${p.duration_ms != null ? ` · ${dur(p.duration_ms)}` : ""}` : "never run"}
+          </span>
+        </button>
+        {p.status === "running" && onCancel && (
+          <button
+            onClick={handleCancel}
+            disabled={cancelling}
+            className="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+          >
+            {cancelling ? "Stopping…" : "Stop"}
+          </button>
+        )}
+      </div>
 
       {/* step chain */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">

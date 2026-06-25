@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     # How often the content dispatcher checks for due post slots (minutes).
     CONTENT_DISPATCH_INTERVAL_MIN: int = Field(default=5)
     # How often to sample subscriber counts (minutes) — near-real-time growth.
-    SUBSCRIBER_POLL_INTERVAL_MIN: int = Field(default=20)
+    SUBSCRIBER_POLL_INTERVAL_MIN: int = Field(default=10)
 
     # ── Monitoring (optional) ─────────────────────────────────────────────────
     SENTRY_DSN: str | None = None

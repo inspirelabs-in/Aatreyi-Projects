@@ -253,8 +253,9 @@ class Competitor(Base):
         SAEnum(DiscoverySource, name="discovery_source")
     )
     rank: Mapped[int | None] = mapped_column(SmallInteger)
-    rank_score: Mapped[float | None] = mapped_column(Float)  # composite rank score 0-100
-    # roadmap: flag_disappearing_messages applies a rank penalty
+    rank_score: Mapped[float | None] = mapped_column(Float)
+    topic_similarity: Mapped[float | None] = mapped_column(Float)
+    content_similarity: Mapped[float | None] = mapped_column(Float)
     has_disappearing_messages: Mapped[bool] = mapped_column(Boolean, default=False)
     discovered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

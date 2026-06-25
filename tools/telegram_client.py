@@ -9,13 +9,42 @@ If your network blocks the Telegram protocol (ISP/DPI), set TELEGRAM_PROXY in
 """
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
 from telethon import TelegramClient
 from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate
+from telethon.sessions import SQLiteSession
 
 from config import settings
+
+
+class _RobustSQLiteSession(SQLiteSession):
+    """SQLiteSession with WAL mode and a 30-second busy timeout.
+
+    Both the API and scheduler containers mount the same session file. Telethon's
+    default SQLiteSession opens sqlite3 with timeout=0, which fails immediately
+    when the scheduler holds a write lock (e.g. during reconnect). This subclass:
+      - uses timeout=30 so callers wait up to 30s for the lock instead of dying
+      - enables WAL journal mode (persisted in the file header) so concurrent
+        readers never block each other even while one writer is active
+    """
+
+    def _cursor(self):
+        if self._conn is None:
+            self._conn = sqlite3.connect(
+                self.filename,
+                check_same_thread=False,
+                timeout=30,
+            )
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA busy_timeout=30000")
+            except Exception:
+                pass
+        return self._conn.cursor()
 
 
 def _parse_proxy(raw: str | None):
@@ -59,13 +88,13 @@ def _parse_proxy(raw: str | None):
 def build_client(**kwargs) -> TelegramClient:
     """Construct (but do not connect) a Telethon client from settings.
 
-    Applies TELEGRAM_PROXY if set. Extra kwargs (e.g. connection_retries,
-    timeout) pass through and override the proxy-derived connection class.
+    Uses _RobustSQLiteSession so concurrent API + scheduler access to the same
+    session file uses WAL mode and a 30s busy timeout instead of failing immediately.
     """
     client_kwargs = _parse_proxy(settings.TELEGRAM_PROXY)
-    client_kwargs.update(kwargs)  # caller overrides win
+    client_kwargs.update(kwargs)
     return TelegramClient(
-        settings.TELETHON_SESSION,
+        _RobustSQLiteSession(settings.TELETHON_SESSION),
         settings.TELEGRAM_API_ID,
         settings.TELEGRAM_API_HASH,
         **client_kwargs,
@@ -77,9 +106,25 @@ async def telethon_session():
     """Yield a connected, authorized Telethon client; disconnect on exit.
 
     Raises RuntimeError if no authorized session exists yet (run tools.login).
+    Retries on transient SQLite lock errors (scheduler + API running concurrently).
     """
-    client = build_client()
-    await client.connect()
+    last_exc: Exception | None = None
+    for attempt in range(4):
+        client = build_client()
+        try:
+            await client.connect()
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            await client.disconnect()
+            if "database is locked" in str(exc).lower() and attempt < 3:
+                await asyncio.sleep(1.5 ** attempt)
+            else:
+                raise
+    if last_exc:
+        raise last_exc
+
     try:
         if not await client.is_user_authorized():
             raise RuntimeError(

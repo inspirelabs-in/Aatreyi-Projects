@@ -24,10 +24,19 @@ from db.models import Competitor, CompetitorPost, DiscoverySource
 from tools.channel_dna import CATEGORY_KEYWORDS
 from tools.llm import chat_complete
 
-# Ranking weights (formulae.md §2)
-W_SUBS, W_ER, W_FREQ, W_RELEVANCE = 0.35, 0.35, 0.15, 0.15
-DISAPPEARING_PENALTY = 0.7  # roadmap §3.9
+# Ranking weights — topic/content similarity first, then engagement signals
+W_TOPIC_SIM   = 0.50  # Jaccard overlap of channel topics
+W_CONTENT_SIM = 0.20  # LLM-rated content focus similarity
+W_ER_SIM      = 0.15  # engagement rate similarity
+W_FREQ_SIM    = 0.10  # posting frequency similarity
+W_SUBS_SIM    = 0.05  # subscriber count similarity
+DISAPPEARING_PENALTY = 0.7
 COMPETITOR_WINDOW_DAYS = 30
+
+# Candidates whose topic_similarity falls below this are rejected before ranking.
+# Only applied when the managed channel has known topics; avoids false rejections
+# for channels with no DNA yet.
+TOPIC_SIM_THRESHOLD = 0.30
 
 # Categories where competitors are AGGREGATOR platforms, not the retailers/brands
 # those platforms feature. Discovery uses keyword search + explicit LLM framing.
@@ -111,6 +120,41 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b)
 
 
+def extract_channel_topics(posts: list[dict], n: int = 10) -> list[str]:
+    """Extract the top recurring topics from a set of posts (reuses DNA logic)."""
+    from tools.channel_dna import extract_top_topics
+    return extract_top_topics(posts, n=n)
+
+
+def compute_topic_similarity(my_topics: list[str], candidate_topics: list[str]) -> float:
+    """Jaccard similarity between two topic lists."""
+    a = {t.lower().strip() for t in my_topics if t}
+    b = {t.lower().strip() for t in candidate_topics if t}
+    return round(_jaccard(a, b), 3)
+
+
+async def compute_content_similarity(my_topics: list[str], candidate_topics: list[str]) -> float:
+    """LLM rates content-focus overlap 0-100, returned as 0.0-1.0.
+
+    Fast call (max_tokens=10, temperature=0) — just a single integer back.
+    Falls back to 0.0 on any error so it never blocks the pipeline.
+    """
+    if not my_topics or not candidate_topics:
+        return 0.0
+    system = "You rate topic similarity between two Telegram channels. Reply with ONLY a single integer 0-100. No other text."
+    user = (
+        f"Channel A: {', '.join(my_topics[:8])}\n"
+        f"Channel B: {', '.join(candidate_topics[:8])}\n\n"
+        "How similar is their content focus? (0=completely different, 100=identical)"
+    )
+    try:
+        raw = await chat_complete(system, user, max_tokens=10, temperature=0.0)
+        score = float("".join(c for c in raw.strip() if c.isdigit() or c == "."))
+        return round(min(max(score, 0.0), 100.0) / 100.0, 3)
+    except Exception:
+        return 0.0
+
+
 def channel_keyword_set(category: str | None, sub_category: str | None, topics) -> set[str]:
     kw: set[str] = set()
     for v in (category, sub_category):
@@ -175,30 +219,38 @@ def dedup_competitor_list(
 
 # ── Ranking (pure; formulae.md §2) ───────────────────────────────────────────
 def rank_competitors(candidates: list[dict], channel_keywords: set[str]) -> list[dict]:
-    """Weighted composite rank. Returns candidates sorted, with rank_score + rank."""
+    """Weighted composite rank using topic/content similarity as primary signals.
+
+    Formula (formulae.md §2 — updated):
+        50% topic_similarity  (Jaccard of DNA topics)
+        20% content_similarity (LLM-rated focus overlap)
+        15% ER similarity
+        10% posting frequency similarity
+         5% subscriber count similarity
+    """
     if not candidates:
         return []
-
-    for c in candidates:
-        themes = {str(t).lower() for t in (c.get("top_themes") or [])}
-        c["_relevance"] = _jaccard(channel_keywords, themes)
 
     def col(key):
         return [float(c.get(key) or 0) for c in candidates]
 
-    subs, ers, freqs = col("subscriber_count"), col("avg_er"), col("post_frequency_per_day")
-    rels = [c["_relevance"] for c in candidates]
+    topic_sims  = col("topic_similarity")
+    content_sims = col("content_similarity")
+    ers   = col("avg_er")
+    freqs = col("post_frequency_per_day")
+    subs  = col("subscriber_count")
 
     def norm(x, arr):
         lo, hi = min(arr), max(arr)
         return 0.5 if hi == lo else (x - lo) / (hi - lo)
 
-    for c, s, e, f, r in zip(candidates, subs, ers, freqs, rels):
+    for c, ts, cs, e, f, s in zip(candidates, topic_sims, content_sims, ers, freqs, subs):
         score = (
-            W_SUBS * norm(s, subs)
-            + W_ER * norm(e, ers)
-            + W_FREQ * norm(f, freqs)
-            + W_RELEVANCE * norm(r, rels)
+            W_TOPIC_SIM   * norm(ts, topic_sims)
+            + W_CONTENT_SIM * norm(cs, content_sims)
+            + W_ER_SIM      * norm(e,  ers)
+            + W_FREQ_SIM    * norm(f,  freqs)
+            + W_SUBS_SIM    * norm(s,  subs)
         ) * 100
         if c.get("has_disappearing_messages"):
             score *= DISAPPEARING_PENALTY
@@ -305,44 +357,45 @@ async def discover_competitor_brands(
             context_lines.append(f"- {r['title']}: {r['body']}")
     context = "\n".join(context_lines[:16]) or "(no web results)"
     system = (
-        "You identify real, well-known, ESTABLISHED competitors — major brands and "
-        "popular, actively-posting channels with a substantial audience. Exclude tiny, "
-        "obscure, inactive, or personal channels. Reply ONLY with a JSON array of "
-        "brand/company/channel names (strings), most prominent first, no prose."
+        "You identify real, well-known, ESTABLISHED Indian competitors — major India-based brands "
+        "and popular, actively-posting Indian Telegram channels with a substantial audience. "
+        "Exclude US/UAE/non-Indian brands, tiny, obscure, inactive, or personal channels. "
+        "Reply ONLY with a JSON array of brand/company/channel names (strings), most prominent first, no prose."
     )
     if is_aggregator:
         user = (
-            f"Brand: {brand}\nCategory: {category}\n\n"
+            f"Brand: {brand}\nCategory: {category}\nMarket: India\n\n"
             f"Web search context:\n{context}\n\n"
-            f"List {max_brands} real, established COUPON AGGREGATOR or CASHBACK PLATFORMS "
-            f"that compete directly with \"{brand}\" — websites and apps that collect and "
+            f"List {max_brands} real, established INDIA-BASED COUPON AGGREGATOR or CASHBACK PLATFORMS "
+            f"that compete directly with \"{brand}\" — Indian websites and apps that collect and "
             f"publish deals, coupons, promo codes, and cashback offers from retailers.\n\n"
             f"CRITICAL RULES:\n"
-            f"- Do NOT list retailers (e.g. Amazon, Flipkart, Myntra, Nykaa, Meesho) — "
-            f"those are brands that APPEAR on deal sites, not competing deal sites.\n"
+            f"- India-based platforms ONLY. Do NOT list US/UAE/global-only platforms.\n"
+            f"- Do NOT list retailers (e.g. Amazon, Flipkart, Myntra, Nykaa, Meesho).\n"
             f"- Do NOT list e-commerce marketplaces.\n"
-            f"- ONLY list platforms whose core product is aggregating/curating deals.\n"
+            f"- ONLY list platforms whose core product is aggregating/curating deals for India.\n"
             f"Examples of valid answers: CashKaro, CouponDunia, DesiDime, Zoutons, "
-            f"FreeKaaMaal, GoPaisa, Couponzguru, Slickdeals, Honey.\n"
+            f"FreeKaaMaal, GoPaisa, Couponzguru, MagicPin, PaisaWapas.\n"
             f"JSON array of platform names only."
         )
     elif generic:
         user = (
-            f"Category: {category}\nContent focus (what this channel actually posts): {topics_str}\n\n"
+            f"Category: {category}\nContent focus (what this channel actually posts): {topics_str}\n"
+            f"Market: India\n\n"
             f"Web search context:\n{context}\n\n"
-            f"List {max_brands} real, well-known brands, accounts, or popular Telegram channels "
+            f"List {max_brands} real, well-known INDIAN brands, accounts, or popular Indian Telegram channels "
             f"that publish the SAME kind of content — specifically about: {topics_str}. "
-            f"They must genuinely match this {category} niche (not just the broad category). "
+            f"They must genuinely match this {category} niche (not just the broad category) and target Indian audiences. "
             f"JSON array of names only."
         )
     else:
         user = (
-            f"Brand: {brand}\nCategory: {category}\nNiche topics: {', '.join(topics or [])}\n\n"
+            f"Brand: {brand}\nCategory: {category}\nNiche topics: {', '.join(topics or [])}\nMarket: India\n\n"
             f"Web search context:\n{context}\n\n"
-            f"List {max_brands} real, established competitors of \"{brand}\" in the {category} "
-            f"space — well-known rival apps, websites, AND popular {category} Telegram channels "
+            f"List {max_brands} real, established INDIA-BASED competitors of \"{brand}\" in the {category} "
+            f"space — well-known rival Indian apps, websites, AND popular Indian {category} Telegram channels "
             f"that are comparable or larger in scale and actively post. "
-            f"Exclude \"{brand}\" itself and any small or dormant channels. JSON array of names only."
+            f"Exclude non-Indian brands, \"{brand}\" itself, and any small or dormant channels. JSON array of names only."
         )
     try:
         raw = await chat_complete(system, user, max_tokens=400, temperature=0.4)
@@ -473,21 +526,20 @@ async def find_brand_telegram_channels(brand: str, client=None, max_per: int = 3
             seen.add(u)
             found.append(u)
 
-    # 1. Telegram native search — direct, no web latency, no rate-limit noise.
+    # 1. Telegram native search — single query is enough for established brands.
     if client is not None:
-        for kw in [brand, f"{brand} India", f"{brand} official"]:
-            try:
-                res = await search_telegram_channels(client, kw, limit=8)
-                for c in res["channels"]:
-                    uname = (c.get("username") or "").lower()
-                    title = (c.get("title") or "").lower()
-                    if not uname or _is_spam_channel(uname):
-                        continue
-                    if (key in uname or brand4 in uname or
-                            (len(brand4) >= 4 and brand4 in title)):
-                        _add(uname)
-            except Exception:
-                pass
+        try:
+            res = await search_telegram_channels(client, brand, limit=10)
+            for c in res["channels"]:
+                uname = (c.get("username") or "").lower()
+                title = (c.get("title") or "").lower()
+                if not uname or _is_spam_channel(uname):
+                    continue
+                if (key in uname or brand4 in uname or
+                        (len(brand4) >= 4 and brand4 in title)):
+                    _add(uname)
+        except Exception:
+            pass
         if found:  # Telegram gave us solid matches — skip web search noise
             return [f"@{u}" for u in found[:max_per]]
 
@@ -709,6 +761,8 @@ async def save_competitors(channel_id: str | uuid.UUID, competitors: list[dict])
                 source=DiscoverySource(src) if src in DiscoverySource.__members__ else None,
                 rank=c.get("rank"),
                 rank_score=c.get("rank_score"),
+                topic_similarity=c.get("topic_similarity"),
+                content_similarity=c.get("content_similarity"),
                 has_disappearing_messages=bool(c.get("has_disappearing_messages")),
                 refreshed_at=datetime.now(timezone.utc),
             )

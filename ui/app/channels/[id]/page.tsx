@@ -43,6 +43,15 @@ export default function ControlRoomPage() {
     }
   }
 
+  async function onCancel(agent: string) {
+    try {
+      await api.cancelAgent(id, agent);
+      await load();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   if (error && !data) return <ErrorBox error={error} />;
   if (!data) return <Spinner label="Connecting to control room…" />;
 
@@ -60,7 +69,7 @@ export default function ControlRoomPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <div className="lg:col-span-3"><AgentStream events={data.events} /></div>
-        <div className="lg:col-span-6"><PipelineFlow pipeline={data.pipeline} /></div>
+        <div className="lg:col-span-6"><PipelineFlow pipeline={data.pipeline} onCancel={onCancel} /></div>
         <div className="lg:col-span-3"><SystemPanel system={data.system} channelId={id} onRun={onRun} running={running} /></div>
       </div>
     </div>

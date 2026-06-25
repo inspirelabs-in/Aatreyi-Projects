@@ -18,14 +18,22 @@ Endpoints (all JSON):
 """
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
 from fastapi import Depends, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api import services
-from api.db import get_session
+from api.db import get_session, AsyncSessionLocal
 from api.routers import admin, channels, review
 from config import settings
+from db.models import AgentRun, RunStatus
+
+log = logging.getLogger("api.main")
 
 
 def _init_sentry() -> None:
@@ -39,9 +47,38 @@ def _init_sentry() -> None:
         pass
 
 
-_init_sentry()
+async def _clear_stale_runs() -> None:
+    """Mark any 'running' agent_runs as failed on startup.
 
-app = FastAPI(title="Telegram Growth Agent API", version="0.1.0")
+    Container restarts kill asyncio tasks without updating their DB status,
+    leaving zombie 'running' records that block the UI and prevent re-runs.
+    """
+    try:
+        async with AsyncSessionLocal() as s:
+            result = await s.execute(
+                update(AgentRun)
+                .where(AgentRun.status == RunStatus.running)
+                .values(
+                    status=RunStatus.failed,
+                    error="Interrupted by API restart",
+                    finished_at=datetime.now(timezone.utc),
+                )
+            )
+            await s.commit()
+            if result.rowcount:
+                log.info("startup: cleared %d stale running agent_runs", result.rowcount)
+    except Exception as exc:
+        log.warning("startup: failed to clear stale runs: %s", exc)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _init_sentry()
+    await _clear_stale_runs()
+    yield
+
+
+app = FastAPI(title="Telegram Growth Agent API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

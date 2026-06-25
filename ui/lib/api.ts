@@ -61,6 +61,12 @@ export const api = {
       body: JSON.stringify({ agent, ...extra }),
     }),
 
+  cancelAgent: (id: string, agent: string) =>
+    req<{ agent: string; status: string }>(`/api/channels/${id}/agents/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ agent }),
+    }),
+
   // ── admin (system owner) ──
   adminOverview: () => req<AdminOverview>("/api/admin/overview"),
   adminChannels: () => req<AdminChannelRow[]>("/api/admin/channels"),

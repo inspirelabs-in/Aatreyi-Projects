@@ -26,13 +26,17 @@ from tools.channel_dna import get_channel_category
 from tools.channels import get_channel_context, get_or_create_channel, update_channel_meta
 from tools.competitor import (
     CATEGORY_SEARCH_KEYWORDS,
+    TOPIC_SIM_THRESHOLD,
     _brand_key,
     _is_spam_channel,
     channel_keyword_set,
     compute_benchmarks,
     compute_competitor_metrics,
+    compute_content_similarity,
+    compute_topic_similarity,
     discover_channels_by_keywords,
     discover_competitor_brands,
+    extract_channel_topics,
     find_brand_telegram_channels,
     get_competitor_top_posts,
     get_telegram_recommended_channels,
@@ -49,7 +53,7 @@ from tools.telegram_client import telethon_session
 MAX_CANDIDATES = 30
 TOP_N = 12
 MIN_BEFORE_FALLBACK = 8
-BRAND_RESOLVE_LIMIT = 12  # resolve top-N brands (1 web search each) — rate-limit budget
+BRAND_RESOLVE_LIMIT = 10  # resolve top-N brands — rate-limit budget
 
 
 class CompetitorIntelligenceAgent(BaseAgent):
@@ -88,8 +92,13 @@ class CompetitorIntelligenceAgent(BaseAgent):
         # Shared dedup set — grows as each source adds channels.
         seen_handles: set[str] = set(tracked) | {managed_lower}
 
-        async def _enrich_channel(h: str, source: str) -> dict | None:
-            """Fetch info+posts for a handle, qualify it, return entry or None."""
+        async def _enrich_channel(h: str, source: str, skip_peer_ratio: bool = False) -> dict | None:
+            """Fetch info+posts for a handle, qualify it, return entry or None.
+
+            skip_peer_ratio=True for LLM-identified brands: they are explicitly
+            known market rivals so we don't gate them on Telegram subscriber count
+            relative to us (a brand may be huge on web/app but small on Telegram).
+            """
             hl = h.lstrip("@").lower()
             if hl in seen_handles or _is_spam_channel(hl):
                 return None
@@ -100,7 +109,8 @@ class CompetitorIntelligenceAgent(BaseAgent):
             members = info.get("member_count") or 0
             posts = (await get_competitor_top_posts(client, h))["posts"]
             metrics = compute_competitor_metrics(posts, members)
-            ok, _ = qualifies_as_competitor(members, len(posts), metrics, my_subs)
+            peer_subs = 0 if skip_peer_ratio else my_subs
+            ok, _ = qualifies_as_competitor(members, len(posts), metrics, peer_subs)
             if not ok:
                 return None
             seen_handles.add(hl)
@@ -115,56 +125,57 @@ class CompetitorIntelligenceAgent(BaseAgent):
                 "posts": posts, "on_telegram": True,
             }
 
-        # 1. Category-keyword Telegram search — PRIMARY for aggregator categories
-        #    (deals, coupons, shopping). Finds real peers by what they post about
-        #    rather than by brand name, so it surfaces CashKaro, CouponDunia,
-        #    DesiDime etc. directly without relying on web-search brand guessing.
-        kw_entries: list[dict] = []
+        # 1. Category-keyword search + Telegram recommendations + brand research
+        #    run concurrently — all three are independent network/LLM calls.
         cat_keywords = CATEGORY_SEARCH_KEYWORDS.get((category or "").lower().strip(), [])
-        if cat_keywords:
-            kw_channels = await discover_channels_by_keywords(client, cat_keywords)
-            if kw_channels:
-                sources_used.append("category_keyword_search")
-            for ch in kw_channels:
-                h = ch.get("username")
-                if not h:
-                    continue
-                entry = await _enrich_channel(f"@{h}", "category_keyword_search")
-                if entry:
-                    kw_entries.append(entry)
+        kw_task = discover_channels_by_keywords(client, cat_keywords) if cat_keywords else asyncio.sleep(0, result=[])
+        rec_task = get_telegram_recommended_channels(client, managed)
+        brand_task = discover_competitor_brands(brand, category, topics)
+        kw_channels, tg_recs, brands = await asyncio.gather(kw_task, rec_task, brand_task)
+        brands = brands or []
 
-        # 2. Telegram's own "similar channels" (GetChannelRecommendations).
-        tg_rec_entries: list[dict] = []
-        tg_recs = await get_telegram_recommended_channels(client, managed)
-        if tg_recs["channels"]:
-            sources_used.append("telegram_recommendations")
-        for rec in tg_recs["channels"]:
+        # Enrich all keyword-search and recommendation channels in parallel.
+        async def _enrich_kw(ch: dict) -> dict | None:
+            h = ch.get("username")
+            if not h:
+                return None
+            return await _enrich_channel(f"@{h}", "category_keyword_search")
+
+        async def _enrich_rec(rec: dict) -> dict | None:
             h = rec.get("username")
             if not h:
-                continue
+                return None
             entry = await _enrich_channel(f"@{h}", "telegram_recommendations")
             if entry:
                 entry["display_name"] = rec.get("display_name") or entry["display_name"]
-                tg_rec_entries.append(entry)
+            return entry
 
-        # 3. Market competitor brands via web research + LLM.
-        #    These are REAL market rivals (business names) — may or may not have
-        #    a Telegram channel. Listed regardless; TG data added when found.
-        brands = await discover_competitor_brands(brand, category, topics) or []
+        kw_results, rec_results = await asyncio.gather(
+            asyncio.gather(*[_enrich_kw(ch) for ch in (kw_channels or [])]),
+            asyncio.gather(*[_enrich_rec(rec) for rec in (tg_recs or {}).get("channels", [])]),
+        )
+
+        kw_entries: list[dict] = [e for e in kw_results if e]
+        tg_rec_entries: list[dict] = [e for e in rec_results if e]
+        if kw_entries:
+            sources_used.append("category_keyword_search")
+        if tg_rec_entries:
+            sources_used.append("telegram_recommendations")
+
+        # 2. Resolve each brand's Telegram channel in parallel.
         if brands:
             sources_used.append("market_research")
 
-        # 4. For each brand, find its Telegram channel (Telegram search first).
-        brand_entries: list[dict] = []
         rejected: list[dict] = []
-        for b in brands[:BRAND_RESOLVE_LIMIT]:
+
+        async def _resolve_brand(b: str) -> dict:
             market_entry = {
                 "display_name": b, "username": _brand_key(b), "source": "market_research",
                 "subscriber_count": None, "avg_er": None, "post_frequency_per_day": None,
                 "top_themes": [], "has_disappearing_messages": False, "posts": [], "on_telegram": False,
             }
             for h in await find_brand_telegram_channels(b, client):
-                entry = await _enrich_channel(h, "market_research")
+                entry = await _enrich_channel(h, "market_research", skip_peer_ratio=True)
                 if entry:
                     market_entry.update(entry)
                     break
@@ -172,13 +183,57 @@ class CompetitorIntelligenceAgent(BaseAgent):
                     hl = h.lstrip("@").lower()
                     if hl not in seen_handles and not _is_spam_channel(hl):
                         rejected.append({"brand": b, "handle": h, "reason": "did not qualify"})
-            brand_entries.append(market_entry)
+            return market_entry
 
-        # 5. Merge: keyword search first (most category-accurate), then TG recs,
-        #    then brand-matched. Market-only entries trail at the end.
+        brand_entries: list[dict] = list(await asyncio.gather(
+            *[_resolve_brand(b) for b in brands[:BRAND_RESOLVE_LIMIT]]
+        ))
+
+        # 5. Merge all discovered candidates.
         all_entries = kw_entries + tg_rec_entries + brand_entries
 
-        # 6. Rank: on-Telegram channels by composite score, market-only in order.
+        # 6. Topic + content similarity scoring and filtering.
+        #    Extract the managed channel's own topics from DNA / context.
+        #    For every on-Telegram candidate: compute Jaccard topic similarity,
+        #    reject if below threshold (only when we have topics to compare),
+        #    then ask the LLM to rate content-focus overlap.
+        my_topics = [str(t).lower() for t in (topics or ctx.get("top_topics") or [])]
+        for entry in all_entries:
+            if not entry.get("on_telegram"):
+                entry.setdefault("topic_similarity", 0.0)
+                entry.setdefault("content_similarity", 0.0)
+                continue
+            cand_topics = extract_channel_topics(entry.get("posts") or [])
+            entry["candidate_topics"] = cand_topics
+
+            # Channels found via category keyword search are already category-vetted
+            # by the search terms used to find them — skip the topic threshold check.
+            # Jaccard on category-level topics (e.g. "deals") vs post-level topics
+            # (e.g. "cashback", "amazon offers") always produces near-zero similarity
+            # and would wrongly demote real peers like CashKaro / CouponDunia.
+            if entry.get("source") == "category_keyword_search":
+                entry["topic_similarity"] = 1.0
+                cs = await compute_content_similarity(my_topics, cand_topics) if my_topics else 0.5
+                entry["content_similarity"] = cs
+                continue
+
+            ts = compute_topic_similarity(my_topics, cand_topics) if my_topics else 0.5
+            entry["topic_similarity"] = ts
+            # Demote to market-only when topic overlap is too low.
+            if my_topics and ts < TOPIC_SIM_THRESHOLD:
+                rejected.append({
+                    "brand": entry.get("display_name"),
+                    "handle": entry.get("username"),
+                    "reason": f"topic_sim={ts:.2f} < {TOPIC_SIM_THRESHOLD}",
+                })
+                entry["on_telegram"] = False
+                entry["subscriber_count"] = None
+                entry["content_similarity"] = 0.0
+                continue
+            cs = await compute_content_similarity(my_topics, cand_topics)
+            entry["content_similarity"] = cs
+
+        # 8. Rank: on-Telegram channels by composite score, market-only in order.
         keywords = channel_keyword_set(category, ctx.get("sub_category"), topics)
         with_metrics = rank_competitors([e for e in all_entries if e["on_telegram"]], keywords)
         market_only = [e for e in all_entries if not e["on_telegram"]]

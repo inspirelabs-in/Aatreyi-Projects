@@ -76,6 +76,9 @@ async def main() -> None:
     _init_sentry()
     scheduler = build_scheduler()
     scheduler.start()
+    # Run subscriber poll immediately on startup — don't wait for the first interval.
+    # This ensures the dashboard shows a fresh reading right away, even after a restart.
+    asyncio.get_event_loop().call_soon(lambda: asyncio.ensure_future(poll_subscribers()))
     log.info("Scheduler started. Jobs:")
     for job in scheduler.get_jobs():
         log.info("  %-18s next run: %s", job.id, job.next_run_time)

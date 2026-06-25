@@ -1,9 +1,10 @@
 """Review-queue endpoints + manual agent trigger."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_session
@@ -14,16 +15,33 @@ from tools.content import get_review_queue, publish_generated_post, update_revie
 router = APIRouter(prefix="/api/channels", tags=["review"])
 log = logging.getLogger("api.review")
 
+# Tracks running agent tasks so they can be cancelled.
+# Key: "{channel_id}:{short_agent_name}" — short names match KNOWN_AGENTS.
+_active_tasks: dict[str, asyncio.Task] = {}
 
-async def _run_agent_bg(channel_id: str, username: str | None, agent: str,
+# Maps full AgentName enum values (used in pipeline UI) to KNOWN_AGENTS short names.
+_AGENT_ALIAS: dict[str, str] = {
+    "channel_dna": "dna",
+    "competitor_intelligence": "competitor",
+    "content_intelligence": "content",
+    "analytics": "analytics",
+    "strategy": "strategy",
+    "onboard": "onboard",
+}
+
+
+async def _run_agent_bg(key: str, channel_id: str, username: str | None, agent: str,
                         snapshot_type: str, task_id: str | None, with_telegram: bool) -> None:
-    """Execute an agent run in the background. Each agent logs its own outcome to
-    agent_runs (visible in the Control Room stream), so failures surface there."""
+    """Execute an agent run. Removes itself from _active_tasks when done."""
     try:
         await services.run_agent(channel_id, username, agent, snapshot_type=snapshot_type,
                                  task_id=task_id, with_telegram=with_telegram)
+    except asyncio.CancelledError:
+        log.info("agent run %s/%s cancelled by user", agent, channel_id)
     except Exception as exc:  # noqa: BLE001
         log.warning("agent run %s/%s failed: %s: %s", agent, channel_id, type(exc).__name__, exc)
+    finally:
+        _active_tasks.pop(key, None)
 
 
 @router.get("/{channel_id}/queue")
@@ -38,8 +56,6 @@ async def approve(channel_id: str, post_id: str, session: AsyncSession = Depends
     res = await update_review_status(post_id, "approved")
     if not res.get("updated"):
         raise HTTPException(status_code=404, detail="post not found")
-    # Approving publishes to Telegram when BOT_TOKEN is set; otherwise it stays a
-    # safe no-op (the post is approved but not sent) and we surface why.
     pub = await publish_generated_post(post_id, channel.telegram_username)
     out: dict = {"post_id": post_id, "review_status": "approved",
                  "published": bool(pub.get("published"))}
@@ -73,19 +89,74 @@ async def edit(channel_id: str, post_id: str, body: EditPost,
 
 
 @router.post("/{channel_id}/agents/run", status_code=202)
-async def run_agent(channel_id: str, body: RunAgent, background: BackgroundTasks,
+async def run_agent(channel_id: str, body: RunAgent,
                     session: AsyncSession = Depends(get_session)):
-    """Kick off an agent run in the background and return immediately. Agent runs
-    can take minutes (e.g. competitor discovery), so we never block the HTTP
-    request — progress shows live in the Control Room (it polls agent_runs)."""
+    """Kick off an agent run in the background and return immediately."""
     channel = await _require(session, channel_id)
     if body.agent not in services.KNOWN_AGENTS:
         raise HTTPException(status_code=400, detail=f"unknown agent {body.agent!r}")
     if body.agent == "content" and not body.task_id:
         raise HTTPException(status_code=400, detail="content agent requires task_id")
-    background.add_task(_run_agent_bg, str(channel.id), channel.telegram_username,
-                        body.agent, body.snapshot_type, body.task_id, body.with_telegram)
+    key = f"{channel_id}:{body.agent}"
+    if key in _active_tasks and not _active_tasks[key].done():
+        return {"agent": body.agent, "status": "already_running"}
+    task = asyncio.create_task(
+        _run_agent_bg(key, str(channel.id), channel.telegram_username,
+                      body.agent, body.snapshot_type, body.task_id, body.with_telegram)
+    )
+    _active_tasks[key] = task
     return {"agent": body.agent, "status": "started"}
+
+
+@router.post("/{channel_id}/agents/cancel", status_code=200)
+async def cancel_agent(channel_id: str, body: RunAgent,
+                       session: AsyncSession = Depends(get_session)):
+    """Cancel a running agent for this channel.
+
+    Accepts both short names ('competitor') and full enum names
+    ('competitor_intelligence') so the UI pipeline card can pass p.agent directly.
+    Also clears zombie 'running' DB records left by container restarts.
+    """
+    from datetime import datetime, timezone
+    from db.models import AgentRun, AgentName, RunStatus
+    from sqlalchemy import select, update
+
+    await _require(session, channel_id)
+    short = _AGENT_ALIAS.get(body.agent, body.agent)
+    key = f"{channel_id}:{short}"
+
+    # Cancel the live asyncio task if present.
+    task = _active_tasks.pop(key, None)
+    if task and not task.done():
+        task.cancel()
+
+    # Always clear zombie 'running' DB records for this channel+agent —
+    # container restarts kill tasks without updating their DB status.
+    try:
+        agent_enum_val = body.agent  # full or short name
+        # Map short → full enum name for DB lookup
+        _SHORT_TO_FULL = {v: k for k, v in _AGENT_ALIAS.items()}
+        full_name = _SHORT_TO_FULL.get(agent_enum_val, agent_enum_val)
+        import uuid
+        cid = uuid.UUID(channel_id)
+        await session.execute(
+            update(AgentRun)
+            .where(
+                AgentRun.channel_id == cid,
+                AgentRun.agent == AgentName(full_name),
+                AgentRun.status == RunStatus.running,
+            )
+            .values(
+                status=RunStatus.failed,
+                error="Cancelled by user",
+                finished_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+    except Exception as exc:
+        log.warning("cancel: failed to clear DB run record: %s", exc)
+
+    return {"agent": body.agent, "status": "cancelled"}
 
 
 async def _require(session: AsyncSession, channel_id: str):
