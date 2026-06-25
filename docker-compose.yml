@@ -1,0 +1,103 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: tga_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tga
+      POSTGRES_PASSWORD: tga
+      POSTGRES_DB: tga
+    ports:
+      - "5433:5432"
+    volumes:
+      - tga_pgdata:/var/lib/postgresql/data
+    # Host port 5433 avoids clashing with a local Postgres on 5432. The app
+    # containers connect internally via the service name `db:5432`, not this.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tga"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: tga_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - tga_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # One-shot: apply DB migrations, then exit. API/scheduler wait for this.
+  migrate:
+    build: .
+    container_name: tga_migrate
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env
+    environment:
+      # Point at the in-compose datastores (overrides .env localhost values).
+      DATABASE_URL: postgresql+asyncpg://tga:tga@db:5432/tga
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # FastAPI backend (UI + webhooks). Runs 24/7.
+  api:
+    build: .
+    container_name: tga_api
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tga:tga@db:5432/tga
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist the Telethon login session across rebuilds / re-logins.
+      - ./tga_user.session:/app/tga_user.session
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Next.js UI frontend. Runs on port 3000.
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    container_name: tga_ui
+    ports:
+      - "3000:3000"
+    env_file: ./ui/.env.local
+    restart: unless-stopped
+
+  # APScheduler daemon: daily/weekly/monthly cycles + content dispatcher (IST). Runs 24/7.
+  scheduler:
+    build: .
+    container_name: tga_scheduler
+    command: ["python", "-m", "scheduler.main"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tga:tga@db:5432/tga
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./tga_user.session:/app/tga_user.session
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  tga_pgdata:
+  tga_redisdata:

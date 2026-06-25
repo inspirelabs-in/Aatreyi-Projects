@@ -1,0 +1,14 @@
+# Local-demo override: run the Docker api + scheduler against the EXISTING
+# local Postgres on the host (keeps current GrabOn data — no re-onboarding).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build api scheduler
+#
+# For a real server deploy, DON'T use this file — plain `docker compose up -d`
+# uses the self-contained container Postgres instead.
+services:
+  api:
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:Aatreyi2905@host.docker.internal:5432/tga
+  scheduler:
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:Aatreyi2905@host.docker.internal:5432/tga

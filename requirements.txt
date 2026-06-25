@@ -1,0 +1,41 @@
+# ── Core ───────────────────────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# ── Database ─────────────────────────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.36
+greenlet==3.1.1                  # required by SQLAlchemy async engine
+alembic==1.14.0
+psycopg[binary]==3.3.4           # sync driver (alembic migrations); 3.14 wheels
+asyncpg==0.31.0                  # async driver (app runtime); 3.14 wheels
+
+# ── Task queue / cache ─────────────────────────────────────────────────────
+redis==5.2.1
+rq==2.1.0
+
+# ── Telegram ───────────────────────────────────────────────────────────────
+telethon==1.44.0                 # MTProto: listening + history (matches session schema)
+python-socks[asyncio]==2.5.3     # SOCKS5/HTTP proxy support for Telethon
+python-telegram-bot==21.10       # Bot API: publishing + review queue bot
+
+# ── Scheduler ──────────────────────────────────────────────────────────────
+apscheduler==3.11.0
+
+# ── Scraping / sources ───────────────────────────────────────────────────────
+httpx==0.28.1
+beautifulsoup4==4.12.3
+feedparser==6.0.11
+ddgs==9.0.0                      # DuckDuckGo search (competitor discovery)
+
+# ── LLM ──────────────────────────────────────────────────────────────────────
+anthropic==0.42.0
+
+# ── Monitoring (optional) ────────────────────────────────────────────────────
+sentry-sdk==2.20.0
+
+# ── Dev / test ───────────────────────────────────────────────────────────────
+pytest==8.3.4
+pytest-asyncio==0.25.2
