@@ -55,6 +55,10 @@ TOP_N = 12
 MIN_BEFORE_FALLBACK = 8
 BRAND_RESOLVE_LIMIT = 10  # resolve top-N brands — rate-limit budget
 
+# Telegram allows ~30 API requests/30s per account. Cap concurrent calls to
+# avoid FloodWaitError when enriching many channels in parallel.
+_TG_SEM = asyncio.Semaphore(3)
+
 
 class CompetitorIntelligenceAgent(BaseAgent):
     name = "competitor_intelligence"
@@ -87,6 +91,14 @@ class CompetitorIntelligenceAgent(BaseAgent):
         sources_used: list[str] = []
         tracked = await get_tracked_usernames(channel_id)
         my_subs = ctx.get("subscriber_count") or 0
+        # If DB value is stale/null, read live from Telegram so the peer-ratio
+        # gate (>= 5% of our size) has a real floor to enforce.
+        if not my_subs:
+            try:
+                live = await get_telegram_channel_info(client, managed)
+                my_subs = live.get("member_count") or 0
+            except Exception:
+                pass
         managed_lower = managed.lstrip("@").lower()
 
         # Shared dedup set — grows as each source adds channels.
@@ -139,13 +151,15 @@ class CompetitorIntelligenceAgent(BaseAgent):
             h = ch.get("username")
             if not h:
                 return None
-            return await _enrich_channel(f"@{h}", "category_keyword_search")
+            async with _TG_SEM:
+                return await _enrich_channel(f"@{h}", "category_keyword_search")
 
         async def _enrich_rec(rec: dict) -> dict | None:
             h = rec.get("username")
             if not h:
                 return None
-            entry = await _enrich_channel(f"@{h}", "telegram_recommendations")
+            async with _TG_SEM:
+                entry = await _enrich_channel(f"@{h}", "telegram_recommendations")
             if entry:
                 entry["display_name"] = rec.get("display_name") or entry["display_name"]
             return entry
@@ -174,8 +188,11 @@ class CompetitorIntelligenceAgent(BaseAgent):
                 "subscriber_count": None, "avg_er": None, "post_frequency_per_day": None,
                 "top_themes": [], "has_disappearing_messages": False, "posts": [], "on_telegram": False,
             }
-            for h in await find_brand_telegram_channels(b, client):
-                entry = await _enrich_channel(h, "market_research", skip_peer_ratio=True)
+            async with _TG_SEM:
+                handles = await find_brand_telegram_channels(b, client)
+            for h in handles:
+                async with _TG_SEM:
+                    entry = await _enrich_channel(h, "market_research", skip_peer_ratio=True)
                 if entry:
                     market_entry.update(entry)
                     break

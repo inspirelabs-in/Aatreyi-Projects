@@ -256,7 +256,7 @@ _AGENT_META: dict[str, dict] = {
     "channel_dna": {"label": "Channel DNA", "icon": "🧬",
                     "steps": ["Fetch posts", "Compute ER", "Detect niche", "Save DNA"]},
     "competitor_intelligence": {"label": "Competitor", "icon": "🕵️",
-                    "steps": ["Discover brands", "Find Telegram", "Enrich + rank", "Benchmark"]},
+                    "steps": ["Keywords + brands", "Resolve handles", "Enrich + score", "Rank + benchmark"]},
     "analytics": {"label": "Analytics", "icon": "📊",
                     "steps": ["Fetch metrics", "Compute delta", "Detect churn", "Generate insights"]},
     "strategy": {"label": "Strategy", "icon": "🧠",

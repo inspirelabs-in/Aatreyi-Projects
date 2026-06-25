@@ -332,9 +332,12 @@ async def fetch_content_sources(channel_id: str | uuid.UUID, topic: str | None =
                 .order_by(ContentSource.avg_quality_score.desc())
             )
         ).scalars().all()
+    # Channel Website is always tried first — regardless of EMA drift — so the
+    # channel's own content takes priority over generic RSS/Telegram sources.
+    sorted_rows = sorted(rows, key=lambda r: (0 if r.name == "Channel Website" else 1, -(r.avg_quality_score or 0.0)))
     return {"sources": [
         {"id": str(r.id), "type": r.type.value, "url": r.url, "name": r.name,
-         "avg_quality_score": r.avg_quality_score} for r in rows
+         "avg_quality_score": r.avg_quality_score} for r in sorted_rows
     ]}
 
 

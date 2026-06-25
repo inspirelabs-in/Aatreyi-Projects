@@ -64,7 +64,7 @@ CATEGORY_SEARCH_KEYWORDS: dict[str, list[str]] = {
 # ── Competitor qualification benchmarks ──────────────────────────────────────
 # A real competitor must be an established, active channel of comparable scale —
 # not a tiny or dormant channel that happens to match a keyword.
-MIN_COMPETITOR_MEMBERS = 1000          # absolute floor: must be an established channel
+MIN_COMPETITOR_MEMBERS = 10_000        # absolute floor: must be an established channel
 MIN_COMPETITOR_POSTS = 3               # must be active (>= N recent posts in the window)
 MIN_PEER_SUBSCRIBER_RATIO = 0.05       # peer scale: >= 5% of the managed channel's size
 MIN_QUALIFIED_COMPETITORS = 3          # below this, relax the peer-ratio so we never zero out
@@ -643,11 +643,19 @@ async def get_telegram_recommended_channels(client, username: str, limit: int = 
 # ── Discovery: Telegram public search (network, Telethon) ────────────────────
 async def search_telegram_channels(client, keyword: str, limit: int = 10) -> dict[str, Any]:
     """SearchPublicRequest via Telethon -> channel usernames + member counts."""
+    import asyncio as _asyncio
+    from telethon.errors import FloodWaitError
     from telethon.tl.functions.contacts import SearchRequest
     from telethon.tl.types import Channel as TLChannel
 
     try:
         res = await client(SearchRequest(q=keyword, limit=limit))
+    except FloodWaitError as e:
+        await _asyncio.sleep(min(e.seconds + 2, 60))
+        try:
+            res = await client(SearchRequest(q=keyword, limit=limit))
+        except Exception:
+            return {"channels": []}
     except Exception:
         return {"channels": []}
     channels = []

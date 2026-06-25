@@ -180,7 +180,7 @@ async def onboard_channel_pipeline(channel_id: str) -> dict:
         from tools.content_sources import seed_default_sources
         # Pass posts so source seeder can detect the channel's primary website
         # (e.g. grbn.in links → grabon.in) instead of using a generic category default.
-        await _safe(seed_default_sources(channel_id, ctx.get("category"), posts=channel_posts), f"sources/{uname}")
+        await _safe(seed_default_sources(channel_id, ctx.get("category"), posts=channel_posts, bio_text=channel_info.get("description")), f"sources/{uname}")
         # Generate content for the whole plan up front (demo flow) so the Content
         # Factory is populated immediately — the scheduler no longer dispatches
         # content per-slot. Every planned slot (incl. retention triggers) ships a

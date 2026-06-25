@@ -7,18 +7,18 @@ analytics snapshot. Samples accumulate in subscriber_readings.
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from sqlalchemy import select
 
 from db.base import AsyncSessionLocal
-from db.models import ChannelDNA, SubscriberReading
+from db.models import AnalyticsSnapshot, ChannelDNA, SnapshotType, SubscriberReading
 
 
 async def record_subscriber_reading(channel_id: str | uuid.UUID, count: int | None) -> None:
-    """Store a subscriber sample and keep the channel's DNA count fresh (the
-    dashboard KPI + strategy inputs read DNA.subscriber_count)."""
+    """Store a subscriber sample, keep DNA count fresh, and upsert today's
+    daily analytics snapshot so the analytics chart reflects the current count."""
     cid = uuid.UUID(str(channel_id))
     async with AsyncSessionLocal() as s:
         s.add(SubscriberReading(channel_id=cid, subscriber_count=count))
@@ -26,6 +26,29 @@ async def record_subscriber_reading(channel_id: str | uuid.UUID, count: int | No
             dna = (await s.execute(select(ChannelDNA).where(ChannelDNA.channel_id == cid))).scalar_one_or_none()
             if dna:
                 dna.subscriber_count = count
+            # Upsert today's daily analytics snapshot with the latest subscriber count.
+            # This makes the analytics chart update every 10 min without a full agent run.
+            today = date.today()
+            snap = (await s.execute(
+                select(AnalyticsSnapshot)
+                .where(
+                    AnalyticsSnapshot.channel_id == cid,
+                    AnalyticsSnapshot.snapshot_type == SnapshotType.daily,
+                    AnalyticsSnapshot.period_end == today,
+                )
+                .order_by(AnalyticsSnapshot.created_at.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            if snap:
+                snap.subscriber_count = count
+            else:
+                s.add(AnalyticsSnapshot(
+                    channel_id=cid,
+                    snapshot_type=SnapshotType.daily,
+                    period_start=today,
+                    period_end=today,
+                    subscriber_count=count,
+                ))
         await s.commit()
 
 

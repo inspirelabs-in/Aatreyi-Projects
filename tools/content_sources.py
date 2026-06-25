@@ -28,6 +28,25 @@ _SKIP_DOMAINS = {
 
 _URL_RE = re.compile(r"https?://[^\s)\]\"'<>]+", re.IGNORECASE)
 
+# Give the channel's own website a head-start quality score so it sorts first
+# in fetch_content_sources (which orders by avg_quality_score DESC).
+_WEBSITE_INITIAL_SCORE: float = 5.0
+
+
+def _extract_bio_url(bio_text: str | None) -> str | None:
+    """Extract the first valid website URL from a channel's bio/about text."""
+    if not bio_text:
+        return None
+    for url in _URL_RE.findall(bio_text):
+        try:
+            parsed = urlparse(url)
+            host = parsed.netloc.lower().lstrip("www.")
+            if host and host not in _SKIP_DOMAINS:
+                return f"{parsed.scheme}://{parsed.netloc}/"
+        except Exception:
+            pass
+    return None
+
 
 def _extract_domains(posts: list[dict]) -> Counter:
     """Count external domains linked in channel posts."""
@@ -141,14 +160,17 @@ async def seed_default_sources(
     channel_id: str | uuid.UUID,
     category: str | None = None,
     posts: list[dict] | None = None,
+    bio_text: str | None = None,
 ) -> dict[str, Any]:
     """Add content sources when a channel has none yet.
 
-    For ephemeral categories (deals, shopping, coupons): if channel posts are
-    provided, auto-detects the channel's primary website by following the URLs
-    it posts (incl. shorteners like grbn.in → grabon.in) and seeds that as the
-    source — so each channel uses its own website rather than a generic default.
-    Falls back to DEFAULT_FEEDS_BY_CATEGORY if detection fails."""
+    Priority for finding the channel's own website (works for ALL categories):
+      1. bio_text — extract URL from the channel's Telegram bio/about text
+      2. posts    — scan linked domains in recent posts (follows shorteners)
+      3. fallback — DEFAULT_FEEDS_BY_CATEGORY for the category
+
+    The detected "Channel Website" source is seeded with an elevated initial
+    avg_quality_score so it is always fetched before generic RSS feeds."""
     cid = uuid.UUID(str(channel_id))
     async with AsyncSessionLocal() as session:
         existing = (
@@ -157,10 +179,10 @@ async def seed_default_sources(
         if existing:
             return {"seeded": 0, "reason": "already_has_sources"}
 
-    # For ephemeral categories, try to detect the channel's own website from posts.
-    detected_url: str | None = None
-    cat_key = (category or "").strip().lower()
-    if cat_key in _EPHEMERAL_CATEGORIES and posts:
+    # 1. Try bio URL first (works for any category, no posts needed).
+    detected_url: str | None = _extract_bio_url(bio_text)
+    # 2. Fall back to post-link detection for any category (not just ephemeral).
+    if not detected_url and posts:
         detected_url = await _detect_channel_website(posts)
 
     async with AsyncSessionLocal() as session:
@@ -173,8 +195,20 @@ async def seed_default_sources(
                 name="Channel Website",
                 category=category,
                 is_active=True,
+                avg_quality_score=_WEBSITE_INITIAL_SCORE,
             ))
             added += 1
+            # Also add category feeds as supplementary sources.
+            for name, url, src_type in _feeds_for_category(category):
+                session.add(ContentSource(
+                    channel_id=cid,
+                    type=SourceType(src_type),
+                    url=url,
+                    name=name,
+                    category=category,
+                    is_active=True,
+                ))
+                added += 1
         else:
             for name, url, src_type in _feeds_for_category(category):
                 session.add(ContentSource(
