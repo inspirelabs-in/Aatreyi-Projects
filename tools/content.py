@@ -41,6 +41,35 @@ NOVELTY_SIM = 0.65
 COMPETITOR_SIM = 0.60
 VIRALITY_ENGAGEMENT = 0.02
 
+# Generic feed/aggregator hosts that are NOT a channel's own brand site — never
+# used as a fallback CTA link (a coding channel shouldn't "click here" to hnrss).
+_GENERIC_FEED_HOSTS = {
+    "hnrss.org", "news.ycombinator.com", "reddit.com", "www.reddit.com",
+    "medium.com", "feeds.feedburner.com", "feedburner.com", "rss.app",
+    "techcrunch.com", "theverge.com", "youtube.com", "www.youtube.com",
+}
+
+
+def _channel_landing_url(src_rows: list) -> str | None:
+    """Pick the channel's own brand URL (rooted to its domain) for use as a
+    fallback CTA link. A source explicitly named/typed as the channel website is
+    trusted; otherwise the first source whose host isn't a generic feed host is
+    used. Returns None when only generic aggregator feeds exist."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    for url, name, stype in src_rows or []:
+        if not url:
+            continue
+        parts = urlsplit(url)
+        host = (parts.netloc or "").lower()
+        if not host:
+            continue
+        type_val = stype.value if hasattr(stype, "value") else stype
+        is_own = (name == "Channel Website") or (type_val == "website")
+        if is_own or host not in _GENERIC_FEED_HOSTS:
+            return urlunsplit((parts.scheme or "https", parts.netloc, "/", "", ""))
+    return None
+
 HOOK_PATTERNS = [
     r"\d+\s+(ways|tools|tips|reasons|mistakes)",
     r"(how to|why|what happens when)",
@@ -311,14 +340,16 @@ async def load_content_context(channel_id: str | uuid.UUID) -> dict[str, Any]:
         ).scalars().first()
         # The channel's own website (detected at onboarding) — used as a fallback
         # CTA link so every post is actionable even when it has no source URL.
-        website_src = (
+        src_urls = (
             await session.execute(
-                select(ContentSource.url)
-                .where(ContentSource.channel_id == cid, ContentSource.type == "website")
+                select(ContentSource.url, ContentSource.name, ContentSource.type)
+                .where(ContentSource.channel_id == cid, ContentSource.is_active.is_(True))
                 .order_by((ContentSource.name == "Channel Website").desc(),
+                          (ContentSource.type == "website").desc(),
                           ContentSource.avg_quality_score.desc())
             )
-        ).scalars().first()
+        ).all()
+    website_src = _channel_landing_url(src_urls)
     intelligence = (intel_snap.intelligence or {}) if intel_snap else {}
     return {
         "channel_dna": {"tone_fingerprint": dna.tone_fingerprint, "category": dna.category,
