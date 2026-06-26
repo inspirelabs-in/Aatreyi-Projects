@@ -20,6 +20,7 @@ from db.models import (
     ChannelDNA,
     Competitor,
     GeneratedPost,
+    PostQueue,
     ReviewStatus,
     RunStatus,
     SnapshotType,
@@ -107,11 +108,12 @@ async def get_queue(session: AsyncSession, channel_id: str) -> list[dict]:
     cid = _uid(channel_id)
     rows = (
         await session.execute(
-            select(GeneratedPost)
+            select(GeneratedPost, PostQueue.scheduled_at)
+            .join(PostQueue, PostQueue.generated_post_id == GeneratedPost.id, isouter=True)
             .where(GeneratedPost.channel_id == cid, GeneratedPost.review_status == ReviewStatus.pending)
-            .order_by(GeneratedPost.created_at.desc())
+            .order_by(PostQueue.scheduled_at.asc().nulls_last(), GeneratedPost.created_at.desc())
         )
-    ).scalars().all()
+    ).all()
     return [
         {
             "generated_post_id": str(r.id),
@@ -123,9 +125,10 @@ async def get_queue(session: AsyncSession, channel_id: str) -> list[dict]:
             "cta": r.cta,
             "hashtags": r.hashtags,
             "review_status": r.review_status.value,
+            "scheduled_at": scheduled_at.isoformat() if scheduled_at else None,
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
-        for r in rows
+        for r, scheduled_at in rows
     ]
 
 

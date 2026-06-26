@@ -2,6 +2,8 @@
 
 import React, { useState } from "react";
 import type { AgentEvent, PipelineAgent, SystemState } from "@/lib/types";
+import { InfoTooltip } from "@/components/ui";
+import { AGENT_INFO, METRIC_INFO, SECTION_INFO } from "@/lib/descriptions";
 
 // ── shared bits ──────────────────────────────────────────────────────────────
 const STATUS_DOT: Record<string, string> = {
@@ -35,6 +37,7 @@ export function AgentStream({ events }: { events: AgentEvent[] }) {
           <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
         </span>
         <h3 className="text-sm font-semibold text-slate-700">Live Agent Stream</h3>
+        <InfoTooltip text={SECTION_INFO.agentStream} />
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto p-3" style={{ maxHeight: "70vh" }}>
         {events.length === 0 && <p className="py-8 text-center text-sm text-slate-400">No agent activity yet.</p>}
@@ -61,7 +64,10 @@ export function AgentStream({ events }: { events: AgentEvent[] }) {
 export function PipelineFlow({ pipeline, onCancel }: { pipeline: PipelineAgent[]; onCancel?: (agent: string) => void }) {
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-slate-700">Active Agent Workflows</h3>
+      <h3 className="flex items-center text-sm font-semibold text-slate-700">
+        Active Agent Workflows
+        <InfoTooltip text={SECTION_INFO.pipeline} />
+      </h3>
       {pipeline.map((p) => <PipelineCard key={p.agent} p={p} onCancel={onCancel} />)}
     </div>
   );
@@ -155,6 +161,7 @@ export function SystemPanel({
         <div className="flex items-center gap-2">
           <span className={`h-2.5 w-2.5 rounded-full ${h.dot}`} />
           <span className="text-sm font-semibold text-slate-700">System State</span>
+          <InfoTooltip text="A snapshot of the channel's current health: growth, engagement, retention, and churn risk." />
           {system.thinking && (
             <span className="ml-auto flex items-center gap-1 text-xs text-blue-600">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" /> thinking…
@@ -165,24 +172,30 @@ export function SystemPanel({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Metric label="Growth rate" value={system.growth_rate != null ? `${system.growth_rate > 0 ? "+" : ""}${system.growth_rate}%` : "—"}
+        <Metric label="Growth rate" info={METRIC_INFO.growth_rate} value={system.growth_rate != null ? `${system.growth_rate > 0 ? "+" : ""}${system.growth_rate}%` : "—"}
           tone={(system.growth_rate ?? 0) >= 0 ? "text-green-600" : "text-red-600"} />
-        <Metric label="Engagement pulse" value={system.engagement_pulse != null ? `${system.engagement_pulse}%` : "—"} />
-        <Metric label="Retention" value={`${TREND_ICON[system.retention_trend] ?? "▬"} ${system.retention_trend}`}
+        <Metric label="Engagement pulse" info={METRIC_INFO.engagement_pulse} value={system.engagement_pulse != null ? `${system.engagement_pulse}%` : "—"} />
+        <Metric label="Retention" info={METRIC_INFO.retention} value={`${TREND_ICON[system.retention_trend] ?? "▬"} ${system.retention_trend}`}
           tone={TREND_COLOR[system.retention_trend] ?? "text-slate-500"} />
-        <Metric label="Churn risk"
+        <Metric label="Churn risk" info={METRIC_INFO.churn_risk}
           value={system.churn_risk === "unknown" ? "no data yet" : system.churn_risk + (system.churn_type ? ` · ${system.churn_type}` : "")}
           tone={system.churn_risk === "high" ? "text-red-600" : system.churn_risk === "medium" ? "text-amber-600" : system.churn_risk === "low" ? "text-amber-500" : system.churn_risk === "unknown" ? "text-slate-400" : "text-green-600"} />
       </div>
 
       <div className="rounded-xl border border-edge bg-panel p-4 shadow-card">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Manual triggers</div>
+        <div className="flex items-center text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Manual triggers
+          <InfoTooltip text={SECTION_INFO.manualTriggers} />
+        </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {["dna", "competitor", "analytics", "strategy"].map((a) => (
-            <button key={a} onClick={() => onRun(a)} disabled={!!running}
-              className="rounded-md border border-edge bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:border-brand hover:text-brand disabled:opacity-50">
-              {running === a ? `${a}…` : `Run ${a}`}
-            </button>
+            <span key={a} className="inline-flex items-center">
+              <button onClick={() => onRun(a)} disabled={!!running}
+                className="rounded-md border border-edge bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm transition hover:border-brand hover:text-brand disabled:opacity-50">
+                {running === a ? `${a}…` : `Run ${a}`}
+              </button>
+              {AGENT_INFO[a] && <InfoTooltip text={AGENT_INFO[a]} />}
+            </span>
           ))}
         </div>
         <p className="mt-2 text-[11px] text-slate-400">
@@ -194,10 +207,13 @@ export function SystemPanel({
   );
 }
 
-function Metric({ label, value, tone = "text-slate-900" }: { label: string; value: React.ReactNode; tone?: string }) {
+function Metric({ label, value, tone = "text-slate-900", info }: { label: string; value: React.ReactNode; tone?: string; info?: string }) {
   return (
     <div className="rounded-xl border border-edge bg-panel p-3 shadow-card">
-      <div className="text-[11px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="flex items-center text-[11px] uppercase tracking-wide text-slate-500">
+        {label}
+        {info && <InfoTooltip text={info} />}
+      </div>
       <div className={`mt-0.5 text-lg font-semibold capitalize ${tone}`}>{value}</div>
     </div>
   );

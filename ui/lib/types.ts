@@ -40,6 +40,7 @@ export interface QueueItem {
   cta: string | null;
   hashtags: string[] | null;
   review_status: string;
+  scheduled_at: string | null;
   created_at: string | null;
 }
 

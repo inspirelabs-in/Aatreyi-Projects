@@ -4,7 +4,16 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { QueueItem } from "@/lib/types";
-import { Badge, Card, ErrorBox, Spinner } from "@/components/ui";
+import { Badge, Card, ErrorBox, InfoTooltip, Spinner } from "@/components/ui";
+
+function fmtSchedule(iso: string | null): string {
+  if (!iso) return "Not scheduled";
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, {
+    weekday: "short", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
 
 export default function QueuePage() {
   const { id } = useParams<{ id: string }>();
@@ -34,8 +43,12 @@ export default function QueuePage() {
       </p>
       {items.map((it) => (
         <Card key={it.generated_post_id}>
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <Badge tone="blue">{it.post_format}</Badge>
+            <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+              🗓 {fmtSchedule(it.scheduled_at)}
+              <InfoTooltip text="When this post is scheduled to publish. Deal/coupon posts are generated at most 2 days ahead so the offer is still live when it goes out." />
+            </span>
             {it.hashtags?.map((h) => <span key={h} className="text-xs text-slate-500">{h}</span>)}
           </div>
 

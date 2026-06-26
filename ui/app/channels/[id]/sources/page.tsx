@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { ChannelSettings, ContentSourceRow } from "@/lib/types";
-import { Badge, Card, ErrorBox, Spinner } from "@/components/ui";
+import { Badge, Card, ErrorBox, InfoTooltip, Spinner } from "@/components/ui";
+import { SECTION_INFO } from "@/lib/descriptions";
 
 export default function SourcesPage() {
   const { id } = useParams<{ id: string }>();
@@ -56,6 +57,7 @@ export default function SourcesPage() {
             onChange={(e) => act("settings", () => api.updateSettings(id, { auto_approve: e.target.checked }))}
           />
           Auto-approve &amp; publish (requires BOT_TOKEN and bot as channel admin)
+          <InfoTooltip text={SECTION_INFO.autoApprove} />
         </label>
         <p className="mt-1 text-xs text-slate-500">
           When off, posts go to the Content Factory queue for manual review.
@@ -64,7 +66,10 @@ export default function SourcesPage() {
 
       <div className="flex flex-wrap items-end gap-2">
         <div>
-          <label className="text-xs text-slate-500">Type</label>
+          <label className="flex items-center text-xs text-slate-500">
+            Type
+            <InfoTooltip text={srcType === "rss" ? SECTION_INFO.rss : SECTION_INFO.website} />
+          </label>
           <select value={srcType} onChange={(e) => setSrcType(e.target.value as "rss" | "website")}
             className="block rounded-md border border-edge bg-field px-2 py-1.5 text-sm">
             <option value="rss">RSS feed</option>
@@ -103,7 +108,10 @@ export default function SourcesPage() {
                 <Badge tone={s.is_active ? "green" : "slate"}>{s.is_active ? "active" : "off"}</Badge>
                 <Badge>{s.type}</Badge>
                 {s.avg_quality_score > 0 && (
-                  <span className="text-xs text-slate-500">quality {s.avg_quality_score.toFixed(1)}</span>
+                  <span className="inline-flex items-center text-xs text-slate-500">
+                    quality {s.avg_quality_score.toFixed(1)}
+                    <InfoTooltip text={SECTION_INFO.quality} />
+                  </span>
                 )}
               </div>
               <p className="mt-1 truncate text-xs text-slate-500">{s.url}</p>
