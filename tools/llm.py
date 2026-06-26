@@ -45,22 +45,29 @@ async def _groq_chat(system, user, model, temperature, max_tokens, max_retries) 
     }
     headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}"}
     delay = 2.0
-    last_exc: Exception | None = None
+    last_err: str = "unknown error"
+    # Generous retries: Groq free-tier rate limits (429) are per-minute, so a
+    # batch of content generations can trip them — wait it out rather than fail.
+    attempts = max(max_retries, 6)
     async with httpx.AsyncClient(timeout=60) as client:
-        for attempt in range(max_retries):
+        for attempt in range(attempts):
             try:
                 resp = await client.post(GROQ_URL, json=payload, headers=headers)
-                if resp.status_code == 429:  # rate limited -> backoff
-                    await asyncio.sleep(delay)
-                    delay *= 2
+                if resp.status_code == 429:  # rate limited
+                    # Honor Groq's Retry-After (seconds) when present; else backoff.
+                    retry_after = resp.headers.get("retry-after")
+                    wait = float(retry_after) if retry_after else delay
+                    last_err = f"429 rate limited (waited {wait:.0f}s)"
+                    await asyncio.sleep(min(wait, 30.0))
+                    delay = min(delay * 2, 30.0)
                     continue
                 resp.raise_for_status()
                 return resp.json()["choices"][0]["message"]["content"]
             except Exception as exc:  # noqa: BLE001
-                last_exc = exc
+                last_err = f"{type(exc).__name__}: {exc}"
                 await asyncio.sleep(delay)
-                delay *= 2
-    raise RuntimeError(f"LLM call failed after {max_retries} retries: {last_exc}")
+                delay = min(delay * 2, 30.0)
+    raise RuntimeError(f"LLM call failed after {attempts} retries: {last_err}")
 
 
 def parse_post_json(raw: str) -> dict[str, Any]:
