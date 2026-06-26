@@ -35,6 +35,7 @@ from db.models import (
 from tools.llm import chat_complete, parse_poll_json, parse_post_json
 
 # ── Constants (formulae.md §5) ───────────────────────────────────────────────
+_DEALS_CATEGORIES = {"deals", "shopping", "coupons", "offers"}
 FRESHNESS_HOURS = 48
 EVERGREEN_HOURS = 168
 NOVELTY_SIM = 0.65
@@ -657,13 +658,19 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
     fmt = _gen_format(task.get("format"))
     media_url = (content_item or {}).get("image_url")
     external_url = (content_item or {}).get("external_url")
+    is_deals = (dna.get("category") or "").lower().strip() in _DEALS_CATEGORIES
 
     # photo/video slots need media — fetch from Pexels when no source image.
-    # If Pexels is unconfigured or returns nothing, downgrade to text so the
-    # post still ships rather than publishing a broken photo.
+    # For DEALS with no product image, fall back to a LINK post (keeps the
+    # affiliate URL) rather than a plain text post that loses the deal link.
     if fmt in ("photo", "video") and not media_url:
         media_url = await _fetch_topic_image_url(task.get("topic"), dna.get("category"))
-        fmt = "photo" if media_url else "text"
+        if media_url:
+            fmt = "photo"
+        elif is_deals and external_url:
+            fmt = "link"
+        else:
+            fmt = "text"
 
     if fmt == "poll":
         raw = await chat_complete(_GEN_SYSTEM_POLL, _base_user_prompt(task, dna, content_item))
@@ -674,7 +681,16 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
         }
     else:
         user = _base_user_prompt(task, dna, content_item)
-        if external_url:
+        if is_deals:
+            # Broadcast deal announcement: state product + price + discount, end with
+            # a short grab-the-deal CTA. NEVER ask the audience anything — they can't reply.
+            user += (
+                "\nThis is a DEAL ANNOUNCEMENT for a broadcast channel. Lead with the product, its "
+                "discounted price and the % off, then a short CTA to grab the deal. Do NOT ask the "
+                "audience any question, do NOT say 'what's your favourite', 'share your thoughts', "
+                "'let us know', 'comment below' or invite any reply — users cannot respond here.\n"
+            )
+        elif external_url:
             user += "\nA clickable link button will be attached to this post. A short link CTA (e.g. 'Grab the deal', 'Read more') is fine.\n"
         else:
             user += (
