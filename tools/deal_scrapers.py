@@ -22,9 +22,16 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from typing import Any
 
 from config import settings
+
+# Short-lived cache so a daily batch (many slots generated back-to-back) scrapes
+# the marketplaces ONCE rather than per-slot — faster and far less likely to trip
+# bot-blocking. Keyed by the scrape parameters.
+_DEAL_CACHE: dict[str, Any] = {"key": None, "deals": None, "ts": 0.0}
+_DEAL_CACHE_TTL_SEC = 1800  # 30 min
 
 # ── Categories (comprehensive) ───────────────────────────────────────────────
 # Amazon needs (search keyword, search index `i`); Flipkart needs a keyword.
@@ -229,6 +236,11 @@ async def get_fresh_deals(
     platforms = platforms or [s.strip() for s in (settings.DEAL_PLATFORMS or "Amazon,Flipkart").split(",") if s.strip()]
     pref, floor = settings.DEAL_PREFERRED_DISCOUNT, settings.DEAL_MIN_DISCOUNT
 
+    cache_key = f"{','.join(sorted(platforms))}|{max_per_category}|{pref}|{floor}"
+    if (_DEAL_CACHE["deals"] is not None and _DEAL_CACHE["key"] == cache_key
+            and (time.time() - _DEAL_CACHE["ts"]) < _DEAL_CACHE_TTL_SEC):
+        return _DEAL_CACHE["deals"]
+
     raw: list[dict[str, Any]] = []
     tasks = []
     if "Amazon" in platforms:
@@ -239,10 +251,34 @@ async def get_fresh_deals(
         if isinstance(res, list):
             raw.extend(res)
 
-    valid = [d for d in raw if (d.get("discount_pct") or 0) >= floor]
-    top = [d for d in valid if (d.get("discount_pct") or 0) >= pref]
-    chosen = top if top else valid
-    chosen.sort(key=lambda d: d.get("discount_pct") or 0, reverse=True)
+    # Apply the discount policy PER CATEGORY (prefer >=pref, else >=floor) and
+    # round-robin across categories so the mix spans ALL categories (fashion,
+    # electronics, home, beauty, …) instead of clustering on whichever category
+    # happens to have the highest-discount outliers (e.g. grocery).
+    by_cat: dict[str, list[dict]] = {}
+    for d in raw:
+        if (d.get("discount_pct") or 0) >= floor:
+            by_cat.setdefault(d.get("category") or "Other", []).append(d)
+
+    ranked: dict[str, list[dict]] = {}
+    for cat, ds in by_cat.items():
+        top = [d for d in ds if (d.get("discount_pct") or 0) >= pref]
+        picks = top if top else ds
+        picks.sort(key=lambda d: d.get("discount_pct") or 0, reverse=True)
+        ranked[cat] = picks
+
+    # Interleave categories (round-robin) for a diverse, balanced deal list.
+    order = [c["category"] for c in (categories or DEAL_CATEGORIES) if c["category"] in ranked]
+    order += [c for c in ranked if c not in order]
+    chosen: list[dict] = []
+    i = 0
+    while any(i < len(ranked[c]) for c in order):
+        for c in order:
+            if i < len(ranked[c]):
+                chosen.append(ranked[c][i])
+        i += 1
+
+    _DEAL_CACHE.update(key=cache_key, deals=chosen, ts=time.time())
     return chosen
 
 

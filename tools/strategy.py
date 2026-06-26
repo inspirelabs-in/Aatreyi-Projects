@@ -79,17 +79,27 @@ def _normalise_to_pct(weights: dict[str, float]) -> list[dict]:
     return [{"format": f, "pct": p} for f, p in sorted(pcts.items(), key=lambda kv: kv[1], reverse=True)]
 
 
+_DEALS_CATEGORIES = {"deals", "shopping", "coupons", "offers"}
+
+
 def compute_content_mix(
     top_content_formats: list[dict] | None,
     er_by_format: dict[str, float] | None,
     channel_avg_er: float | None,
     avg_er: float | None,
+    category: str | None = None,
 ) -> list[dict]:
+    # Deals / broadcast channels: product PHOTO posts dominate (the image is the
+    # hook) plus some link posts. NO polls — a broadcast deals channel can't take
+    # user replies, so question/poll posts are dead weight.
+    if (category or "").lower().strip() in _DEALS_CATEGORIES:
+        return _normalise_to_pct({"photo": 0.75, "link": 0.25})
+
     base: dict[str, float] = {}
     for entry in top_content_formats or []:
         base[entry.get("format", "article")] = float(entry.get("share") or 0)
     if not base:
-        base = {"article": 0.5, "poll": 0.3, "meme": 0.2}
+        base = {"article": 0.4, "photo": 0.3, "poll": 0.3}
 
     # ER boost per format (§4.2) when available
     if er_by_format and channel_avg_er:
@@ -109,7 +119,32 @@ def compute_content_mix(
         adjusted = scaled
     # Rule: ER > 8% -> hold mix (no change)
 
+    # Variety floor: don't let one format (usually plain text/article) dominate —
+    # ensure visual posts exist and cap any single format at 55%.
+    adjusted = _enforce_format_variety(adjusted)
     return _normalise_to_pct(adjusted)
+
+
+def _enforce_format_variety(weights: dict[str, float]) -> dict[str, float]:
+    """Avoid a single-format (usually text) plan: guarantee a visual format and
+    cap any one format at 55% of the mix."""
+    w = {f: v for f, v in weights.items() if v and v > 0}
+    if not w:
+        return {"article": 0.4, "photo": 0.3, "poll": 0.3}
+    total = sum(w.values())
+    # ensure a visual format is present
+    if not ({"photo", "meme", "video"} & set(w)):
+        w["photo"] = total * 0.3
+        total = sum(w.values())
+    # cap any dominant format at 55%, spread the excess across the rest
+    for f in list(w):
+        if w[f] / total > 0.55:
+            excess = w[f] - total * 0.55
+            w[f] = total * 0.55
+            others = [g for g in w if g != f]
+            for g in others:
+                w[g] += excess / len(others)
+    return w
 
 
 # ── Slot assignment (§4.3) ───────────────────────────────────────────────────
@@ -379,12 +414,15 @@ def compute_strategy(
     churn = analytics.get("churn_signal")
     sub_delta = analytics.get("subscriber_delta")
 
+    category = dna.get("category")
+    is_deals = (category or "").lower().strip() in _DEALS_CATEGORIES
+
     declining = bool(churn) or (sub_delta is not None and sub_delta < 0)
     freq = recommended_frequency(dna.get("post_frequency_per_day"), delta_pct, avg_er, declining=declining)
     slots_per_day = max(1, round(freq))
 
     content_mix = compute_content_mix(
-        dna.get("top_content_formats"), er_by_format, avg_er, avg_er
+        dna.get("top_content_formats"), er_by_format, avg_er, avg_er, category=category
     )
 
     # specific DNA-mined topics first, then category fallback, then competitor gaps
@@ -404,14 +442,16 @@ def compute_strategy(
     # into the channel's highest-ER format (measured by the Analytics agent).
     # Fallback: when no competitor ER data exists at all, self-benchmark using the
     # channel's own best-performing format  - the mix is always data-driven.
+    # (Deals channels keep their intentional photo/link mix — don't let ER-by-format
+    # boosting drag it back toward text/poll formats.)
     top_er_format = max(er_by_format, key=er_by_format.get) if er_by_format else None
     behind = bench_er is not None and avg_er is not None and bench_er > avg_er
-    if behind and top_er_format:
+    if not is_deals and behind and top_er_format:
         content_mix = boost_format(content_mix, top_er_format)
         for t in tactics:
             if t["tactic"] in ("close_er_gap", "mirror_format"):
                 t["action"] += f" Applied: boosted '{top_er_format}' (your highest-ER format) in the mix."
-    elif not valid_competitor_data and top_er_format and er_by_format:
+    elif not is_deals and not valid_competitor_data and top_er_format and er_by_format:
         self_top_er = er_by_format[top_er_format]
         if self_top_er > (avg_er or 0):
             content_mix = boost_format(content_mix, top_er_format)
@@ -451,7 +491,9 @@ def compute_strategy(
     # Phase 2: execute retention. When there's a retention concern (churn, weak
     # engagement, or a silent community), schedule habit-loop triggers as the
     # first slots  - gated so healthy active channels keep their plain plan.
-    retention_concern = (
+    # Deals/broadcast channels skip retention triggers — they're engagement/poll
+    # style posts ("what do you want more of?") that a broadcast channel can't act on.
+    retention_concern = (not is_deals) and (
         bool(churn)
         or (avg_er is not None and avg_er < 2.0)
         or community_state == "silent"
@@ -481,12 +523,19 @@ def compute_strategy(
         _inject_recycle_slots(tasks, recycle_candidates, slots_per_day)
     fatigue = fatigue_score(tasks)
 
-    goal = (
-        f"Grow {dna.get('category') or 'channel'}: {slots_per_day} post(s)/day, "
-        f"focus {', '.join(primary_topics[:3])}"
-    )
-    if bench_er is not None and avg_er is not None and bench_er > avg_er:
-        goal += f". Close ER gap to competitor avg {bench_er}% (current {avg_er}%)"
+    if is_deals:
+        goal = (
+            f"Drive clicks & conversions: post {slots_per_day} fresh high-discount deal(s)/day "
+            f"as product photos with affiliate links, spread across categories "
+            f"({', '.join(primary_topics[:3])}). Lead with the biggest savings."
+        )
+    else:
+        goal = (
+            f"Grow {dna.get('category') or 'channel'}: {slots_per_day} post(s)/day, "
+            f"focus {', '.join(primary_topics[:3])}"
+        )
+        if bench_er is not None and avg_er is not None and bench_er > avg_er:
+            goal += f". Close ER gap to competitor avg {bench_er}% (current {avg_er}%)"
     diagnosis = build_diagnosis(avg_er, sub_delta, churn, bench_er, tactics)
     competitor_insights = _build_competitor_insights(competitors)
     return {
