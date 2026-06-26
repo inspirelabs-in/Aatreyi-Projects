@@ -612,8 +612,12 @@ def _base_user_prompt(task: dict, dna: dict, content_item: dict | None) -> str:
         p += f"Special format: {kind_hint}\n"
     if content_item:
         p += (
-            f"\nSource title: {content_item.get('title')}\n"
-            f"Source excerpt: {(content_item.get('body_text') or '')[:800]}\n"
+            "\nWrite this post ABOUT the specific deal/source below. The brand/subject you name "
+            "MUST be this exact one — do NOT substitute a different brand or invent unrelated products, "
+            "and the post must make sense as a lead-in to its link. Only mention a discount if it appears "
+            "in the source; otherwise keep the offer general (e.g. 'latest deals & coupons').\n"
+            f"Source title: {content_item.get('title')}\n"
+            f"Source details: {(content_item.get('body_text') or '')[:800]}\n"
         )
     return p
 
