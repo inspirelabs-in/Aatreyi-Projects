@@ -263,6 +263,72 @@ async def scrape_website(url: str, topic: str | None = None) -> dict[str, Any]:
             "published_at": None, "external_url": url, "image_url": image_url}
 
 
+# Deal/coupon link patterns seen on aggregator sites (GrabOn, etc.). Each match
+# is an individual deal page, so posts can link to that specific offer.
+_DEAL_LINK_RES = [
+    re.compile(r"/([a-z0-9][a-z0-9-]*-coupons)/?$", re.I),                 # grabon: /amazon-coupons/
+    re.compile(r"/(?:coupons|deals|offers|store|stores)/([a-z0-9-]+)/?$", re.I),
+]
+
+
+def _deal_brand(slug: str) -> str:
+    return re.sub(r"-?coupons?$", "", slug).replace("-", " ").strip().title()
+
+
+async def scrape_deal_links(url: str, topic: str | None = None, limit: int = 40) -> list[dict[str, Any]]:
+    """Scrape a deals/coupons aggregator (e.g. grabon.in) for INDIVIDUAL deal
+    pages. Returns one item per deal, each with external_url set to that specific
+    deal page — so generated posts deep-link to the offer, not the homepage."""
+    from urllib.parse import urljoin, urlsplit
+    from bs4 import BeautifulSoup
+
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True,
+                                     headers={"User-Agent": "Mozilla/5.0"}) as c:
+            resp = await c.get(url)
+            resp.raise_for_status()
+            html = resp.text
+    except Exception:
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+    base = url
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        slug = None
+        for rx in _DEAL_LINK_RES:
+            m = rx.search(href.split("?")[0])
+            if m:
+                slug = m.group(1)
+                break
+        if not slug:
+            continue
+        deal_url = urljoin(base, href.split("?")[0])
+        if not deal_url.endswith("/"):
+            deal_url += "/"
+        if deal_url in seen or deal_url.rstrip("/") == base.rstrip("/"):
+            continue
+        seen.add(deal_url)
+        brand = _deal_brand(slug)
+        if not brand:
+            continue
+        text = " ".join(a.get_text(" ", strip=True).split())[:120]
+        items.append({
+            "title": f"{brand} coupons & deals",
+            "body_text": f"{brand} — {text or 'latest verified coupons and offers'}. "
+                         f"Live deals and discount codes available now.",
+            "external_url": deal_url,
+            "image_url": None,
+            "published_at": None,
+            "format_tag": topic,
+        })
+        if len(items) >= limit:
+            break
+    return items
+
+
 async def check_url_used(channel_id: str | uuid.UUID, external_url: str) -> dict[str, Any]:
     cid = uuid.UUID(str(channel_id))
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
@@ -472,6 +538,24 @@ def _gen_format(task_format: str | None) -> str:
     return _GEN_FORMAT_MAP.get((task_format or "text").lower(), "text")
 
 
+# CTAs that promise a clickable destination — meaningless (and misleading) on a
+# post that has no link, so they're dropped when no URL is attached.
+_LINKY_CTA_RE = re.compile(
+    r"(click|tap)\s+(the\s+)?(link|here|below)|\b(shop|buy|order|book)\s+now\b|"
+    r"\b(read|check)\s+(it|the\s+\w+|this|more|now|out|deals?)\b|"
+    r"grab\s+(the|this|your)\s+(deal|offer|coupon)|visit\s+(the\s+)?(site|store|link)|"
+    r"link\s+in|use\s+(the\s+)?(link|code)|claim\s+(it|now|the)",
+    re.I,
+)
+
+
+def _strip_linky_cta(cta: str | None) -> str:
+    """Blank a CTA that references a link/destination when no link is attached."""
+    if cta and _LINKY_CTA_RE.search(cta):
+        return ""
+    return cta or ""
+
+
 def _tone_str(dna: dict) -> str:
     tone = (dna or {}).get("tone_fingerprint") or {}
     if not tone:
@@ -563,19 +647,30 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
         }
     else:
         user = _base_user_prompt(task, dna, content_item)
+        if external_url:
+            user += "\nA clickable link button will be attached to this post. A short link CTA (e.g. 'Grab the deal', 'Read more') is fine.\n"
+        else:
+            user += (
+                "\nThere is NO link for this post. Do NOT write a CTA that references a link or URL — "
+                "no 'click here', 'click the link', 'shop now', 'read now', 'check the deal', or 'visit'. "
+                "If you add a CTA at all, make it engagement-only (ask a question / invite a reaction); "
+                "otherwise leave it empty.\n"
+            )
         user += "\nWrite the post."
         raw = await chat_complete(_GEN_SYSTEM_TEXT, user)
         out = parse_post_json(raw)
         out["poll_options"] = None
         out["media_url"] = media_url if fmt in ("photo", "video") else None
-        # The source/deal URL backs the CTA for EVERY format (not just link) so the
-        # "Shop Now"-style button is actionable. Falls back to the channel's own
-        # website so a CTA is never a dead end. Stored separately and rendered as a
-        # clickable inline button at publish time.
-        out["link_url"] = external_url or dna.get("channel_website")
+        # The CTA links to the SPECIFIC source/deal URL (rendered as a clickable
+        # button at publish time). No homepage fallback — a CTA is only a link when
+        # there's a real page to send the reader to.
+        out["link_url"] = external_url
         # link-format posts also carry the URL inline in the body for visibility.
         if fmt == "link" and external_url and external_url not in (out["post_text"] or ""):
             out["post_text"] = f"{out['post_text']}\n\n{external_url}"
+        # Safety net: with no link, strip any link-promising CTA the model still wrote.
+        if not out["link_url"]:
+            out["cta"] = _strip_linky_cta(out.get("cta"))
 
     out.update({
         "format": fmt, "llm_model": settings.GROQ_MODEL,

@@ -25,6 +25,7 @@ from tools.content import (
     maybe_auto_publish,
     save_content_item,
     save_content_score,
+    scrape_deal_links,
     scrape_website,
     score_content_items,
     update_source_quality_score,
@@ -82,10 +83,12 @@ class ContentIntelligenceAgent(BaseAgent):
             # Deal expired or no candidate → fall through to fresh source fetch below.
 
         # 1. gather items from all active sources
+        category = ((context.get("channel_dna") or {}).get("category") or "").lower().strip()
+        is_deals = category in {"deals", "shopping", "coupons", "offers"}
         sources = (await fetch_content_sources(channel_id, task.get("topic"), task.get("format")))["sources"]
         items: list[dict] = []
         for src in sources:
-            fetched = await self._fetch_from_source(src, task, channel_id, client)
+            fetched = await self._fetch_from_source(src, task, channel_id, client, is_deals=is_deals)
             for it in fetched:
                 it["_source_id"] = src["id"]
             items.extend(fetched)
@@ -139,9 +142,16 @@ class ContentIntelligenceAgent(BaseAgent):
             "auto_published": auto.get("auto_published"),
         }
 
-    async def _fetch_from_source(self, src, task, channel_id, client) -> list[dict]:
+    async def _fetch_from_source(self, src, task, channel_id, client, is_deals: bool = False) -> list[dict]:
         topic = task.get("topic")
         try:
+            # Deals/coupons channels: scrape the site for INDIVIDUAL deal pages so
+            # each post deep-links to that specific offer (not the homepage).
+            if is_deals and src["type"] in ("rss", "website"):
+                deals = await scrape_deal_links(src["url"], topic)
+                if deals:
+                    return deals
+                # fall through to normal handling if no deal links were found
             if src["type"] == "rss":
                 return fetch_rss_feed(src["url"], topic)["items"]
             if src["type"] == "website":
