@@ -513,6 +513,9 @@ class GeneratedPost(Base):
         SAEnum(PostFormat, name="generated_post_format")
     )
     media_url: Mapped[str | None] = mapped_column(Text)
+    # destination URL for the CTA (e.g. the deal/article link) — rendered as a
+    # clickable "Shop Now"-style inline button when the post is published.
+    link_url: Mapped[str | None] = mapped_column(Text)
     # poll posts: ["option 1", "option 2", ...] (post_text holds the question)
     poll_options: Mapped[list | None] = mapped_column(JSONB)
     cta: Mapped[str | None] = mapped_column(String(256))

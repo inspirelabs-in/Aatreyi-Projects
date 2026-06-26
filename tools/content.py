@@ -517,17 +517,20 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
         poll = parse_poll_json(raw)
         out = {
             "post_text": poll["question"], "poll_options": poll["options"],
-            "cta": "", "hashtags": poll["hashtags"], "media_url": None,
+            "cta": "", "hashtags": poll["hashtags"], "media_url": None, "link_url": None,
         }
     else:
         user = _base_user_prompt(task, dna, content_item)
-        if fmt == "link" and external_url:
-            user += f"\nInclude this link in the post: {external_url}\n"
         user += "\nWrite the post."
         raw = await chat_complete(_GEN_SYSTEM_TEXT, user)
         out = parse_post_json(raw)
         out["poll_options"] = None
         out["media_url"] = media_url if fmt in ("photo", "video") else None
+        # The source/deal URL backs the CTA for EVERY format (not just link) so the
+        # "Shop Now"-style button is actionable. Stored separately and rendered as a
+        # clickable inline button at publish time.
+        out["link_url"] = external_url
+        # link-format posts also carry the URL inline in the body for visibility.
         if fmt == "link" and external_url and external_url not in (out["post_text"] or ""):
             out["post_text"] = f"{out['post_text']}\n\n{external_url}"
 
@@ -567,6 +570,7 @@ async def add_to_review_queue(
             post_text=generated_post.get("post_text"),
             post_format=fmt,
             media_url=generated_post.get("media_url"),
+            link_url=generated_post.get("link_url"),
             poll_options=generated_post.get("poll_options"),
             cta=generated_post.get("cta"),
             hashtags=generated_post.get("hashtags"),
@@ -684,34 +688,62 @@ async def update_review_status(post_id: str | uuid.UUID, status: str, edited_tex
 
 
 # ── Publishing (Bot API; needs BOT_TOKEN — Phase 7) ──────────────────────────
+def _compose_body(post_text: str, hashtags: list[str] | None, cta: str, has_button: bool) -> str:
+    """Assemble the full message: body + (CTA if no button) + hashtags.
+
+    When the CTA is rendered as a clickable button we drop it from the text to
+    avoid duplication; otherwise the CTA line stays in the body so it's never lost.
+    """
+    parts = [post_text or ""]
+    if cta and not has_button:
+        parts.append(cta)
+    tags = " ".join(t for t in (hashtags or []) if t)
+    if tags:
+        parts.append(tags)
+    return "\n\n".join(p for p in parts if p).strip()
+
+
 async def publish_post(
     channel_username: str,
     post_text: str,
     post_format: str = "text",
     media_url: str | None = None,
     poll_options: list[str] | None = None,
+    link_url: str | None = None,
+    cta: str | None = None,
+    hashtags: list[str] | None = None,
 ) -> dict[str, Any]:
     """Publish a post via the Bot API, dispatching by format.
 
     text/link -> sendMessage, photo -> sendPhoto, video -> sendVideo,
     poll -> sendPoll. Falls back to sendMessage if media is missing.
+
+    When ``link_url`` is set, the CTA is attached as a clickable inline URL button
+    (e.g. "Shop Now" -> the deal link). Hashtags and the CTA are folded into the
+    message so the published post matches the review preview.
     """
     if not settings.BOT_TOKEN:
         return {"published": False, "error": "BOT_TOKEN not set"}
-    from telegram import Bot
+    from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
     bot = Bot(token=settings.BOT_TOKEN)
     chat = channel_username if channel_username.startswith("@") else f"@{channel_username}"
 
+    # A valid http(s) link turns the CTA into a tappable button.
+    button = None
+    if link_url and str(link_url).startswith(("http://", "https://")):
+        button = InlineKeyboardMarkup([[InlineKeyboardButton((cta or "Open").strip()[:64], url=link_url)]])
+    body = _compose_body(post_text or "", hashtags, (cta or "").strip(), has_button=button is not None)
+
     try:
         if post_format == "poll" and poll_options and len(poll_options) >= 2:
-            msg = await bot.send_poll(chat_id=chat, question=post_text[:300], options=poll_options[:10])
+            msg = await bot.send_poll(chat_id=chat, question=(post_text or "")[:300], options=poll_options[:10])
         elif post_format == "photo" and media_url:
-            msg = await bot.send_photo(chat_id=chat, photo=media_url, caption=post_text[:1024])
+            msg = await bot.send_photo(chat_id=chat, photo=media_url, caption=body[:1024], reply_markup=button)
         elif post_format == "video" and media_url:
-            msg = await bot.send_video(chat_id=chat, video=media_url, caption=post_text[:1024])
+            msg = await bot.send_video(chat_id=chat, video=media_url, caption=body[:1024], reply_markup=button)
         else:  # text, link, or media-less fallback
-            msg = await bot.send_message(chat_id=chat, text=post_text)
+            msg = await bot.send_message(chat_id=chat, text=body, reply_markup=button)
     except Exception as exc:  # noqa: BLE001 — surface as error dict, never 500
         # Most common cause: the bot isn't an admin of the channel yet.
         return {"published": False, "error": f"{type(exc).__name__}: {exc}"}
@@ -736,7 +768,10 @@ async def publish_generated_post(
             return {"published": False, "error": "post not found"}
         text = gp.edited_text or gp.post_text or ""
         fmt = gp.post_format.value if gp.post_format else "text"
-        result = await publish_post(channel_username, text, fmt, gp.media_url, gp.poll_options)
+        result = await publish_post(
+            channel_username, text, fmt, gp.media_url, gp.poll_options,
+            link_url=gp.link_url, cta=gp.cta, hashtags=gp.hashtags,
+        )
         if result.get("published"):
             pq = (
                 await session.execute(

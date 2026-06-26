@@ -118,6 +118,7 @@ async def get_queue(session: AsyncSession, channel_id: str) -> list[dict]:
             "post_text": r.post_text,
             "post_format": r.post_format.value if r.post_format else None,
             "media_url": r.media_url,
+            "link_url": r.link_url,
             "poll_options": r.poll_options,
             "cta": r.cta,
             "hashtags": r.hashtags,

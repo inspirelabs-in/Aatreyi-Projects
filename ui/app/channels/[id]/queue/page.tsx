@@ -51,7 +51,12 @@ export default function QueuePage() {
               {it.poll_options.map((o, i) => <li key={i} className="text-sm text-slate-500">◻︎ {o}</li>)}
             </ul>
           )}
-          {it.cta && <p className="mt-2 text-sm text-brand">{it.cta}</p>}
+          {it.cta && (
+            it.link_url
+              ? <a href={it.link_url} target="_blank" rel="noopener noreferrer"
+                   className="mt-2 inline-block rounded-md bg-brand px-3 py-1 text-sm font-medium text-white hover:opacity-90">{it.cta} ↗</a>
+              : <p className="mt-2 text-sm text-brand">{it.cta}</p>
+          )}
           {it.media_url && <p className="mt-1 truncate text-xs text-slate-500">🖼 {it.media_url}</p>}
 
           <div className="mt-3 flex gap-2">

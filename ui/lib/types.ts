@@ -35,6 +35,7 @@ export interface QueueItem {
   post_text: string | null;
   post_format: string | null;
   media_url: string | null;
+  link_url: string | null;
   poll_options: string[] | null;
   cta: string | null;
   hashtags: string[] | null;
