@@ -309,9 +309,20 @@ async def load_content_context(channel_id: str | uuid.UUID) -> dict[str, Any]:
                 .limit(1)
             )
         ).scalars().first()
+        # The channel's own website (detected at onboarding) — used as a fallback
+        # CTA link so every post is actionable even when it has no source URL.
+        website_src = (
+            await session.execute(
+                select(ContentSource.url)
+                .where(ContentSource.channel_id == cid, ContentSource.type == "website")
+                .order_by((ContentSource.name == "Channel Website").desc(),
+                          ContentSource.avg_quality_score.desc())
+            )
+        ).scalars().first()
     intelligence = (intel_snap.intelligence or {}) if intel_snap else {}
     return {
-        "channel_dna": {"tone_fingerprint": dna.tone_fingerprint, "category": dna.category} if dna else {},
+        "channel_dna": {"tone_fingerprint": dna.tone_fingerprint, "category": dna.category,
+                        "top_topics": dna.top_topics, "channel_website": website_src} if dna else {"channel_website": website_src},
         "strategy": {"primary_topics": strat.primary_topics, "goal": strat.goal} if strat else {},
         "score_threshold": channel.score_threshold if channel else settings.SCORE_THRESHOLD,
         "recent_post_fingerprints": [t for t in recent if t],
@@ -527,9 +538,10 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
         out["poll_options"] = None
         out["media_url"] = media_url if fmt in ("photo", "video") else None
         # The source/deal URL backs the CTA for EVERY format (not just link) so the
-        # "Shop Now"-style button is actionable. Stored separately and rendered as a
+        # "Shop Now"-style button is actionable. Falls back to the channel's own
+        # website so a CTA is never a dead end. Stored separately and rendered as a
         # clickable inline button at publish time.
-        out["link_url"] = external_url
+        out["link_url"] = external_url or dna.get("channel_website")
         # link-format posts also carry the URL inline in the body for visibility.
         if fmt == "link" and external_url and external_url not in (out["post_text"] or ""):
             out["post_text"] = f"{out['post_text']}\n\n{external_url}"
