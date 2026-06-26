@@ -186,6 +186,10 @@ class ContentIntelligenceAgent(BaseAgent):
         out = []
         for d in deals:
             it = deal_to_content_item(d)
+            # A deal with no real link is a dead end — skip it so we never post a
+            # linkless "deal" (the reader can't act on it).
+            if not it.get("external_url"):
+                continue
             it["_source_id"] = src_id
             out.append(it)
         return out
