@@ -51,6 +51,7 @@ async def list_channels(active_only: bool = False) -> list[dict[str, Any]]:
                 "telegram_username": r.telegram_username,
                 "tier": r.tier.value if r.tier else None,
                 "status": r.status.value if r.status else None,
+                "category": r.category,
                 "needs_strategy_review": r.needs_strategy_review,
             }
             for r in rows

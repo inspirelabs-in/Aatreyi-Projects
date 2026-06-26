@@ -29,6 +29,7 @@ httpx==0.28.1
 beautifulsoup4==4.12.3
 feedparser==6.0.11
 ddgs==9.0.0                      # DuckDuckGo search (competitor discovery)
+playwright==1.49.1               # headless Chromium for live Amazon/Flipkart deal scraping
 
 # ── LLM ──────────────────────────────────────────────────────────────────────
 anthropic==0.42.0

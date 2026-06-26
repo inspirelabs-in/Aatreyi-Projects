@@ -153,6 +153,24 @@ async def run_daily_cycle() -> dict:
     return {"channels": len(channels)}
 
 
+# ── Daily deals refresh (deals-aggregator channels) ──────────────────────────
+async def run_daily_deals() -> dict:
+    """Refresh deals-category channels with TODAY's deals every day.
+
+    Builds a fresh daily plan and generates content — which, for deals channels,
+    pulls today's live Amazon/Flipkart product deals (>=80% off preferred, never
+    below 65%, affiliate-tagged), falling back to grabon.in coupon pages."""
+    channels = await list_channels()
+    deals_channels = [c for c in channels if (c.get("category") or "").lower() in EPHEMERAL_CATEGORIES]
+    log.info("daily deals refresh: %d deals channels", len(deals_channels))
+    async with telethon_session() as client:
+        for ch in deals_channels:
+            cid, uname = ch["id"], ch["telegram_username"]
+            await _safe(StrategyAgent("daily").run(cid), f"deals_strategy/{uname}")
+            await _safe(generate_content_for_strategy(cid, client), f"deals_content/{uname}")
+    return {"deals_channels": len(deals_channels)}
+
+
 # ── Onboarding orchestrator (tier-aware initial run) ─────────────────────────
 async def onboard_channel_pipeline(channel_id: str) -> dict:
     """Run the initial pipeline for a freshly added channel.

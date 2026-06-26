@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from typing import Any
 
 from agents.base import BaseAgent
@@ -87,11 +88,21 @@ class ContentIntelligenceAgent(BaseAgent):
         is_deals = category in {"deals", "shopping", "coupons", "offers"}
         sources = (await fetch_content_sources(channel_id, task.get("topic"), task.get("format")))["sources"]
         items: list[dict] = []
-        for src in sources:
-            fetched = await self._fetch_from_source(src, task, channel_id, client, is_deals=is_deals)
-            for it in fetched:
-                it["_source_id"] = src["id"]
-            items.extend(fetched)
+
+        # Deals channels: try LIVE Amazon/Flipkart product deals first (today's
+        # deals, >=80% off preferred, never below 65%, affiliate-tagged). If that
+        # yields nothing (e.g. the host's datacenter IP is blocked), fall through
+        # to the active sources (grabon.in coupon pages).
+        if is_deals:
+            live = await self._fetch_live_deals(sources)
+            items.extend(live)
+
+        if not items:
+            for src in sources:
+                fetched = await self._fetch_from_source(src, task, channel_id, client, is_deals=is_deals)
+                for it in fetched:
+                    it["_source_id"] = src["id"]
+                items.extend(fetched)
 
         # dedup against already-used URLs
         fresh: list[dict] = []
@@ -100,6 +111,28 @@ class ContentIntelligenceAgent(BaseAgent):
             if url and (await check_url_used(channel_id, url))["already_used"]:
                 continue
             fresh.append(it)
+
+        dna = context.get("channel_dna") or {}
+        used_original = False
+        content_item_id = None
+
+        # Deals aggregator: every current deal IS on-topic, so don't make scraped
+        # deals pass article-style relevance scoring (brand names rarely match topic
+        # keywords). Pick a deal — preferring one whose brand matches the slot topic —
+        # and generate directly so the post always has a real deal + matching link.
+        if is_deals and fresh:
+            item = self._pick_deal_item(fresh, task.get("topic"))
+            content_item_id = await save_content_item(channel_id, item.get("_source_id"), item)
+            post = await generate_post(item, task, dna)
+            queued = await add_to_review_queue(channel_id, post, task, content_item_id)
+            auto = await maybe_auto_publish(channel_id, queued["generated_post_id"])
+            return {
+                "task_id": task_id, "generated_post_id": queued["generated_post_id"],
+                "review_status": "approved" if auto.get("auto_published") else "pending",
+                "scheduled_at": queued["scheduled_at"], "used_original": False,
+                "items_fetched": len(items), "items_passing": len(fresh),
+                "auto_published": auto.get("auto_published"),
+            }
 
         # 2. score (relax threshold by 1 if nothing passes)
         result = score_content_items(fresh, context)
@@ -110,10 +143,6 @@ class ContentIntelligenceAgent(BaseAgent):
             relaxed["score_threshold"] = max(1, context.get("score_threshold", 4) - 1)
             scored = score_content_items(fresh, relaxed)["scored_items"]
             passing = [s for s in scored if s["scores"]["passed"]]
-
-        dna = context.get("channel_dna") or {}
-        used_original = False
-        content_item_id = None
 
         if passing:
             passing.sort(key=lambda s: s["scores"]["total"], reverse=True)
@@ -141,6 +170,37 @@ class ContentIntelligenceAgent(BaseAgent):
             "items_passing": len(passing),
             "auto_published": auto.get("auto_published"),
         }
+
+    @staticmethod
+    async def _fetch_live_deals(sources: list[dict]) -> list[dict]:
+        """Scrape today's live Amazon/Flipkart product deals (affiliate-tagged) and
+        adapt them to content items. Returns [] on any failure so the caller falls
+        back to grabon.in coupon pages."""
+        from config import settings
+        try:
+            from tools.deal_scrapers import get_fresh_deals, deal_to_content_item
+            deals = await get_fresh_deals(max_per_category=settings.DEAL_MAX_PER_CATEGORY)
+        except Exception:
+            return []
+        src_id = sources[0]["id"] if sources else None
+        out = []
+        for d in deals:
+            it = deal_to_content_item(d)
+            it["_source_id"] = src_id
+            out.append(it)
+        return out
+
+    @staticmethod
+    def _pick_deal_item(fresh: list[dict], topic: str | None) -> dict:
+        """Choose a scraped deal — prefer one whose brand/title overlaps the slot
+        topic so the post is on-theme; otherwise take the first fresh deal."""
+        topic_words = {w for w in re.findall(r"[a-z0-9]+", (topic or "").lower()) if len(w) > 2}
+        if topic_words:
+            for it in fresh:
+                title_words = set(re.findall(r"[a-z0-9]+", (it.get("title") or "").lower()))
+                if topic_words & title_words:
+                    return it
+        return fresh[0]
 
     async def _fetch_from_source(self, src, task, channel_id, client, is_deals: bool = False) -> list[dict]:
         topic = task.get("topic")

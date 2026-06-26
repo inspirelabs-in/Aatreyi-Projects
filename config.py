@@ -70,6 +70,20 @@ class Settings(BaseSettings):
     # Pexels image API for photo post thumbnails (free at pexels.com/api).
     PEXELS_API_KEY: str | None = None
 
+    # ── Live deal scraping (deals-aggregator channels, e.g. GrabOn) ──────────
+    # Affiliate tags appended to scraped product links. Amazon default is the
+    # team tag; Flipkart left blank until the tech team provides one.
+    AMAZON_AFFILIATE_TAG: str = Field(default="tlg022-21")
+    FLIPKART_AFFILIATE_TAG: str | None = None
+    # Discount policy: prefer >= PREFERRED%, fall back no lower than MIN%.
+    DEAL_PREFERRED_DISCOUNT: int = Field(default=80)
+    DEAL_MIN_DISCOUNT: int = Field(default=65)
+    # Platforms to scrape and how many deals per category to keep.
+    DEAL_PLATFORMS: str = Field(default="Amazon,Flipkart")
+    DEAL_MAX_PER_CATEGORY: int = Field(default=3)
+    # Hour (local/IST, 0-23) for the dedicated daily deals refresh job.
+    DEAL_REFRESH_HOUR: int = Field(default=8)
+
     # ── Content scoring defaults ─────────────────────────────────────────────
     SCORE_THRESHOLD: int = Field(default=4)
 
@@ -104,6 +118,7 @@ class Settings(BaseSettings):
         "TGSTAT_API_KEY",
         "TELEMETR_API_KEY",
         "PEXELS_API_KEY",
+        "FLIPKART_AFFILIATE_TAG",
         "SENTRY_DSN",
         mode="before",
     )

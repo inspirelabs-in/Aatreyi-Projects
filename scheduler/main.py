@@ -26,6 +26,7 @@ LOCAL_TZ = ZoneInfo(settings.SCHEDULER_TIMEZONE)
 from scheduler.jobs import (
     poll_subscribers,
     run_daily_cycle,
+    run_daily_deals,
     run_monthly_audit,
     run_weekly_cycle,
 )
@@ -61,6 +62,9 @@ def build_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(run_daily_cycle, CronTrigger(hour=daily_hour, minute=0, timezone=LOCAL_TZ), id="daily_cycle")
     scheduler.add_job(run_weekly_cycle, CronTrigger(day_of_week="mon", hour=weekly_hour, minute=0, timezone=LOCAL_TZ), id="weekly_cycle")
     scheduler.add_job(run_monthly_audit, CronTrigger(day=1, hour=monthly_hour, minute=0, timezone=LOCAL_TZ), id="monthly_audit")
+    # Dedicated daily refresh for deals-aggregator channels with TODAY's deals.
+    deals_hour = settings.DEAL_REFRESH_HOUR % 24
+    scheduler.add_job(run_daily_deals, CronTrigger(hour=deals_hour, minute=0, timezone=LOCAL_TZ), id="daily_deals")
     # NOTE: the per-slot content dispatcher is intentionally NOT registered —
     # content is generated in-flow right after each strategy build (onboarding +
     # daily/weekly cycles), so the Content Factory fills the moment a plan exists.
