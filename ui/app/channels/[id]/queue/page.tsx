@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { QueueItem } from "@/lib/types";
@@ -13,6 +13,29 @@ function fmtSchedule(iso: string | null): string {
     weekday: "short", month: "short", day: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
+}
+
+const URL_RE = /(https?:\/\/[^\s]+)/g;
+
+// Render text with any http(s) URLs turned into clickable links.
+function linkify(text: string | null): React.ReactNode {
+  if (!text) return text;
+  return text.split(URL_RE).map((part, i) =>
+    /^https?:\/\//.test(part) ? (
+      <a key={i} href={part} target="_blank" rel="noopener noreferrer"
+         className="break-all text-brand underline hover:opacity-80">{part}</a>
+    ) : (
+      <React.Fragment key={i}>{part}</React.Fragment>
+    )
+  );
+}
+
+function firstUrl(...texts: (string | null | undefined)[]): string | null {
+  for (const t of texts) {
+    const m = t?.match(URL_RE);
+    if (m) return m[0];
+  }
+  return null;
 }
 
 export default function QueuePage() {
@@ -56,7 +79,7 @@ export default function QueuePage() {
             <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={4}
               className="w-full rounded-lg border border-edge bg-field p-3 text-sm text-slate-800 outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20" />
           ) : (
-            <p className="whitespace-pre-wrap text-slate-800">{it.post_text}</p>
+            <p className="whitespace-pre-wrap text-slate-800">{linkify(it.post_text)}</p>
           )}
 
           {it.poll_options && (
@@ -64,12 +87,16 @@ export default function QueuePage() {
               {it.poll_options.map((o, i) => <li key={i} className="text-sm text-slate-500">◻︎ {o}</li>)}
             </ul>
           )}
-          {it.cta && (
-            it.link_url
-              ? <a href={it.link_url} target="_blank" rel="noopener noreferrer"
-                   className="mt-2 inline-block rounded-md bg-brand px-3 py-1 text-sm font-medium text-white hover:opacity-90">{it.cta} ↗</a>
-              : <p className="mt-2 text-sm text-brand">{it.cta}</p>
-          )}
+          {it.cta && (() => {
+            // Use link_url, or fall back to a URL embedded in the cta / post text.
+            const url = it.link_url || firstUrl(it.cta, it.post_text);
+            // Strip an inline URL out of the cta so the button label stays clean.
+            const label = (it.cta.replace(URL_RE, "").replace(/[:\-–\s]+$/, "").trim()) || "Open link";
+            return url
+              ? <a href={url} target="_blank" rel="noopener noreferrer"
+                   className="mt-2 inline-block rounded-md bg-brand px-3 py-1 text-sm font-medium text-white hover:opacity-90">{label} ↗</a>
+              : <p className="mt-2 text-sm text-brand">{it.cta}</p>;
+          })()}
           {it.media_url && <p className="mt-1 truncate text-xs text-slate-500">🖼 {it.media_url}</p>}
 
           <div className="mt-3 flex gap-2">
