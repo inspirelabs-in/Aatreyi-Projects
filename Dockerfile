@@ -1,6 +1,10 @@
 # App image for the Python services (api / scheduler / agents).
 # DB + Redis run as their own containers (see docker-compose.yml).
-FROM python:3.12-slim
+# Pinned to bookworm (Debian 12): Playwright's `install --with-deps` references
+# font packages (ttf-unifont, ttf-ubuntu-font-family) that were renamed/removed
+# in trixie (Debian 13), which `python:3.12-slim` now tracks — and that breaks
+# the Chromium dep install.
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
