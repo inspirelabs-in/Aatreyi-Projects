@@ -94,8 +94,8 @@ export default function QueuePage() {
             const label = (it.cta.replace(URL_RE, "").replace(/[:\-–\s]+$/, "").trim()) || "Open link";
             return url
               ? <a href={url} target="_blank" rel="noopener noreferrer"
-                   className="mt-2 inline-block rounded-md bg-brand px-3 py-1 text-sm font-medium text-white hover:opacity-90">{label} ↗</a>
-              : <p className="mt-2 text-sm text-brand">{it.cta}</p>;
+                   className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-brand underline underline-offset-2 hover:opacity-80">{label} ↗</a>
+              : <p className="mt-2 text-sm text-slate-600">{it.cta}</p>;
           })()}
           {it.media_url && <p className="mt-1 truncate text-xs text-slate-500">🖼 {it.media_url}</p>}
 

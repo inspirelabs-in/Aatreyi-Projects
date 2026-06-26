@@ -219,6 +219,9 @@ class ChannelDNA(Base):
     top_content_formats: Mapped[list | None] = mapped_column(JSONB)
     # specific recurring topics mined from the channel's own posts (drives strategy)
     top_topics: Mapped[list | None] = mapped_column(JSONB)
+    # a few of the channel's REAL recent posts ({text, format}) used as few-shot
+    # style examples so generated content matches the channel's actual pattern.
+    sample_posts: Mapped[list | None] = mapped_column(JSONB)
     tone_fingerprint: Mapped[dict | None] = mapped_column(JSONB)
     audience_geo_top3: Mapped[list | None] = mapped_column(JSONB)
     growth_curve: Mapped[list | None] = mapped_column(JSONB)

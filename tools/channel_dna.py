@@ -234,6 +234,28 @@ def extract_top_topics(posts: list[dict], category: str | None = None, sub_categ
 
 
 # ── Core computation ─────────────────────────────────────────────────────────
+def _select_sample_posts(window: list[dict], n: int = 5) -> list[dict] | None:
+    """Pick the channel's most-engaged real text posts as style exemplars.
+
+    Returns [{text, format}] so the content generator can mirror the channel's
+    actual voice, length, emoji use and structure instead of inventing a style."""
+    cand = [p for p in window if (p.get("text") or "").strip()]
+    cand.sort(key=lambda p: (p.get("views") or 0) + (p.get("reactions") or 0) * 5
+              + (p.get("forwards") or 0) * 5, reverse=True)
+    out: list[dict] = []
+    seen: set[str] = set()
+    for p in cand:
+        txt = " ".join((p.get("text") or "").split())
+        key = txt[:60].lower()
+        if len(txt) < 15 or key in seen:
+            continue
+        seen.add(key)
+        out.append({"text": txt[:320], "format": p.get("format") or "text"})
+        if len(out) >= n:
+            break
+    return out or None
+
+
 def compute_channel_dna(
     posts: list[dict],
     member_count: int | None,
@@ -264,6 +286,7 @@ def compute_channel_dna(
         "best_post_days": None,
         "top_content_formats": None,
         "top_topics": None,
+        "sample_posts": None,
         "tone_fingerprint": None,
         "audience_geo_top3": None,
         "growth_curve": None,
@@ -284,6 +307,9 @@ def compute_channel_dna(
     # prefer TGStat category if our keyword pass found nothing
     if payload["category"] is None and tgstat_data and tgstat_data.get("category"):
         payload["category"] = tgstat_data["category"]
+
+    # Capture a few REAL posts as style examples for the content generator.
+    payload["sample_posts"] = _select_sample_posts(window)
 
     if len(window) < MIN_POSTS_FOR_DNA:
         payload["insufficient_data"] = True
@@ -462,7 +488,7 @@ async def llm_extract_topics(posts: list[dict], category: str | None, n: int = 6
 _DNA_COLUMNS = {
     "subscriber_count", "avg_views_per_post", "avg_er", "post_frequency_per_day",
     "best_post_hour", "best_post_days", "top_content_formats", "top_topics",
-    "tone_fingerprint", "audience_geo_top3", "growth_curve", "category",
+    "sample_posts", "tone_fingerprint", "audience_geo_top3", "growth_curve", "category",
     "sub_category", "insufficient_data", "analysed_at",
 }
 

@@ -419,7 +419,8 @@ async def load_content_context(channel_id: str | uuid.UUID) -> dict[str, Any]:
     intelligence = (intel_snap.intelligence or {}) if intel_snap else {}
     return {
         "channel_dna": {"tone_fingerprint": dna.tone_fingerprint, "category": dna.category,
-                        "top_topics": dna.top_topics, "channel_website": website_src} if dna else {"channel_website": website_src},
+                        "top_topics": dna.top_topics, "sample_posts": dna.sample_posts,
+                        "channel_website": website_src} if dna else {"channel_website": website_src},
         "strategy": {"primary_topics": strat.primary_topics, "goal": strat.goal} if strat else {},
         "score_threshold": channel.score_threshold if channel else settings.SCORE_THRESHOLD,
         "recent_post_fingerprints": [t for t in recent if t],
@@ -556,6 +557,18 @@ def _strip_linky_cta(cta: str | None) -> str:
     return cta or ""
 
 
+def _clean_text(s: str | None) -> str:
+    """Strip mojibake: an emoji whose UTF-8 bytes were lost shows as a run of
+    literal '?' (one per byte). Remove runs of 2+ '?' and tidy whitespace, while
+    keeping legitimate single '?' (questions, CTAs)."""
+    if not s:
+        return s or ""
+    s = re.sub(r"\?{2,}", "", s)            # drop mojibake question-mark runs
+    s = re.sub(r"[ \t]{2,}", " ", s)        # collapse doubled spaces left behind
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
 def _tone_str(dna: dict) -> str:
     tone = (dna or {}).get("tone_fingerprint") or {}
     if not tone:
@@ -584,6 +597,16 @@ def _base_user_prompt(task: dict, dna: dict, content_item: dict | None) -> str:
         f"Channel niche: {category} | Primary topics ONLY: {topics_str}\n"
         f"Channel tone: {_tone_str(dna)}\n"
     )
+    # Few-shot: the channel's REAL posts so the LLM matches the actual pattern
+    # (length, emoji use, line breaks, hashtag style, hook structure).
+    samples = [s for s in (dna.get("sample_posts") or []) if (s or {}).get("text")][:4]
+    if samples:
+        ex = "\n".join(f'{i+1}. "{s["text"][:220]}"' for i, s in enumerate(samples))
+        p += (
+            "\nHere are this channel's REAL recent posts. Match this exact style — "
+            "the typical length, emoji usage, line breaks, hashtag style and hook structure:\n"
+            f"{ex}\n"
+        )
     kind_hint = _KIND_INSTRUCTION.get((task.get("kind") or "").lower())
     if kind_hint:
         p += f"Special format: {kind_hint}\n"
@@ -672,6 +695,9 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
         if not out["link_url"]:
             out["cta"] = _strip_linky_cta(out.get("cta"))
 
+    # Sanitize mojibake (lost-emoji '?' runs) from any model output before storage.
+    out["post_text"] = _clean_text(out.get("post_text"))
+    out["cta"] = _clean_text(out.get("cta"))
     out.update({
         "format": fmt, "llm_model": settings.GROQ_MODEL,
         "generation_prompt": _base_user_prompt(task, dna, content_item),
