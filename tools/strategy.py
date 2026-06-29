@@ -519,7 +519,9 @@ def compute_strategy(
                 "topic": trig["topic"],
                 "kind": trig["kind"],
             }
-    if recycle_candidates:
+    # Recycling makes no sense for deals/broadcast channels — yesterday's deal has
+    # expired — so only recycle evergreen (non-deals) content.
+    if recycle_candidates and not is_deals:
         _inject_recycle_slots(tasks, recycle_candidates, slots_per_day)
     fatigue = fatigue_score(tasks)
 
