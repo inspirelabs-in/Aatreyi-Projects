@@ -10,10 +10,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import re
 from typing import Any
 
 from agents.base import BaseAgent
+
+log = logging.getLogger(__name__)
 from tools.content import (
     add_to_review_queue,
     check_url_used,
@@ -99,6 +102,16 @@ class ContentIntelligenceAgent(BaseAgent):
             # the plan, instead of always pulling the same few categories.
             live = await self._fetch_live_deals(sources, task.get("topic"))
             items.extend(live)
+        elif task.get("topic"):
+            # Non-deals channels (tech, entertainment, study, …): the slot's topic
+            # is a THEME chosen by the strategy. Discover real on-theme content from
+            # blogs/news + YouTube so the post links to current material, not an
+            # invented one. Falls back to configured RSS/website sources below.
+            try:
+                from tools.content import discover_theme_content
+                items.extend(await discover_theme_content(task.get("topic"), category))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("theme discovery failed for %s: %s", task.get("topic"), exc)
 
         if not items:
             for src in sources:

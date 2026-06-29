@@ -99,6 +99,45 @@ export default function StrategyPage() {
         )}
       </Collapsible>
 
+      {((data.growth_recommendations || []).length > 0 || (data.retention_recommendations || []).length > 0) && (
+        <Collapsible title="📈 Recommendation engine — growth &amp; retention">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <Badge tone="green">Growth</Badge> Grow subscribers &amp; reach
+              </div>
+              <ul className="space-y-2">
+                {(data.growth_recommendations || []).map((r, i) => (
+                  <li key={i} className="rounded-lg border border-edge bg-white p-3">
+                    <p className="text-sm font-medium text-slate-800">{r.recommendation}</p>
+                    {r.why && <p className="mt-1 text-xs text-slate-500">{r.why}</p>}
+                  </li>
+                ))}
+                {(data.growth_recommendations || []).length === 0 && (
+                  <li className="text-sm text-slate-400">No growth recommendations yet.</li>
+                )}
+              </ul>
+            </div>
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <Badge tone="blue">Retention</Badge> Keep members engaged
+              </div>
+              <ul className="space-y-2">
+                {(data.retention_recommendations || []).map((r, i) => (
+                  <li key={i} className="rounded-lg border border-edge bg-white p-3">
+                    <p className="text-sm font-medium text-slate-800">{r.recommendation}</p>
+                    {r.why && <p className="mt-1 text-xs text-slate-500">{r.why}</p>}
+                  </li>
+                ))}
+                {(data.retention_recommendations || []).length === 0 && (
+                  <li className="text-sm text-slate-400">No retention recommendations yet.</li>
+                )}
+              </ul>
+            </div>
+          </div>
+        </Collapsible>
+      )}
+
       {(data.competitor_insights || []).length > 0 && (
         <Collapsible title="Competitor insights (similarity-ranked)">
           <div className="space-y-3">

@@ -264,6 +264,109 @@ async def scrape_website(url: str, topic: str | None = None) -> dict[str, Any]:
             "published_at": None, "external_url": url, "image_url": image_url}
 
 
+# ── Theme-driven discovery (non-deals channels) ──────────────────────────────
+# Hosts that aren't real article/video content (logins, social shells, etc.).
+_DISCOVERY_SKIP_HOSTS = {
+    "facebook.com", "x.com", "twitter.com", "instagram.com", "linkedin.com",
+    "pinterest.com", "t.me", "telegram.me", "reddit.com", "quora.com",
+}
+import time as _time  # noqa: E402
+_LAST_DDG = [0.0]
+_DDG_MIN_INTERVAL = 1.3
+
+
+def _ddg(query: str, kind: str = "text", max_results: int = 8) -> list[dict]:
+    """Throttled DuckDuckGo search (text | news | videos). [] on any failure."""
+    try:
+        from ddgs import DDGS
+    except Exception:
+        return []
+    wait = _DDG_MIN_INTERVAL - (_time.time() - _LAST_DDG[0])
+    if wait > 0:
+        _time.sleep(wait)
+    _LAST_DDG[0] = _time.time()
+    out: list[dict] = []
+    try:
+        with DDGS() as d:
+            gen = (d.videos(query, max_results=max_results) if kind == "videos"
+                   else d.news(query, max_results=max_results) if kind == "news"
+                   else d.text(query, max_results=max_results))
+            for r in gen:
+                out.append(r)
+    except Exception:
+        return []
+    return out
+
+
+async def discover_theme_content(
+    theme: str | None, category: str | None = None, max_items: int = 6,
+) -> list[dict[str, Any]]:
+    """Find fresh, on-theme content from blogs/news + YouTube for a slot's theme.
+
+    This is the non-deals analogue of the deal scrapers: the strategy picks a
+    THEME (e.g. "Artificial Intelligence Courses") and this pulls real articles
+    and videos about it so the generated post links to actual current content,
+    not an invented one. Returns content items ([] on failure -> caller falls
+    back to the channel's configured RSS/website sources)."""
+    import asyncio
+    from urllib.parse import urlsplit
+    if not theme:
+        return []
+    cat = (category or "").strip()
+    article_q = f"{theme} {cat}".strip()
+    # news first (fresher), then general web; videos for the YouTube angle.
+    news = await asyncio.to_thread(_ddg, article_q, "news", 6)
+    web = await asyncio.to_thread(_ddg, article_q, "text", 8)
+    vids = await asyncio.to_thread(_ddg, f"{theme} {cat}".strip(), "videos", 4)
+
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _host(u: str) -> str:
+        try:
+            return urlsplit(u).netloc.lower().lstrip("www.")
+        except Exception:
+            return ""
+
+    for r in (news + web):
+        url = r.get("url") or r.get("href") or ""
+        if not url:
+            continue
+        host = _host(url)
+        if not host or host in _DISCOVERY_SKIP_HOSTS or url in seen:
+            continue
+        seen.add(url)
+        items.append({
+            "title": (r.get("title") or "").strip(),
+            "body_text": (r.get("body") or r.get("excerpt") or r.get("title") or "").strip(),
+            "author": r.get("source") or host,
+            "published_at": None,
+            "external_url": url,
+            "image_url": r.get("image") or None,
+            "format_tag": "article",
+            "topics": [theme],
+        })
+        if sum(1 for i in items if i["format_tag"] == "article") >= max_items - 2:
+            break
+
+    for r in vids:
+        url = r.get("content") or r.get("url") or ""
+        if "youtu" not in url.lower() or url in seen:
+            continue
+        seen.add(url)
+        items.append({
+            "title": (r.get("title") or "").strip(),
+            "body_text": (r.get("description") or r.get("title") or "").strip()[:600],
+            "author": (r.get("uploader") or "YouTube"),
+            "published_at": None,
+            "external_url": url,
+            "image_url": (r.get("images") or {}).get("medium") if isinstance(r.get("images"), dict) else None,
+            "format_tag": "video",
+            "topics": [theme],
+        })
+    return items
+
+
 # Deal/coupon link patterns seen on aggregator sites (GrabOn, etc.). Each match
 # is an individual deal page, so posts can link to that specific offer.
 _DEAL_LINK_RES = [
