@@ -661,6 +661,32 @@ def _strip_linky_cta(cta: str | None) -> str:
     return cta or ""
 
 
+# Any URL/shortlink the model might emit (incl. fabricated grbn.in/amzn.to ones).
+_ANY_URL_RE = re.compile(r"(https?://\S+|\b(?:grbn\.in|grabon\.in|amzn\.to|bit\.ly|fkrt\.it|fkrt\.cc)/\S+)", re.I)
+
+
+def _sanitize_urls(text: str | None, allowed: str | None) -> str:
+    """Remove every URL from generated text EXCEPT the real attached link.
+
+    The model often invents placeholder shortlinks ("Grab now - https://grbn.in/xyz")
+    that 404. The only URL allowed in a post body is the real scraped deal URL; the
+    clickable button (link_url) carries it anyway. Everything else is stripped."""
+    if not text:
+        return text or ""
+    allowed_norm = (allowed or "").strip().rstrip("/").lower()
+
+    def _repl(m: "re.Match") -> str:
+        u = m.group(0).rstrip(".,!)]} ")
+        return m.group(0) if allowed_norm and u.rstrip("/").lower() == allowed_norm else ""
+
+    cleaned = _ANY_URL_RE.sub(_repl, text)
+    # tidy dangling CTA punctuation left behind ("Grab now -", "Buy now:")
+    cleaned = re.sub(r"(?im)\b(grab|buy|shop|get|order)[^\S\n]*(now|it|the deal)?\s*[-–—:]\s*(?=$|\n)", "", cleaned)
+    cleaned = re.sub(r"[ \t]*[-–—:][ \t]*(?=$|\n)", "", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
+
 def _clean_text(s: str | None) -> str:
     """Strip mojibake: an emoji whose UTF-8 bytes were lost shows as a run of
     literal '?' (one per byte). Remove runs of 2+ '?' and tidy whitespace, while
@@ -792,6 +818,9 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
                 "discounted price and the % off, then a short CTA to grab the deal. Do NOT ask the "
                 "audience any question, do NOT say 'what's your favourite', 'share your thoughts', "
                 "'let us know', 'comment below' or invite any reply — users cannot respond here.\n"
+                "Do NOT write any URL, link or shortlink in the text (no 'grbn.in/...', 'amzn.to/...', "
+                "'https://...'). A clickable button with the real link is attached automatically — "
+                "never invent or type a link.\n"
             )
         elif external_url:
             user += "\nA clickable link button will be attached to this post. A short link CTA (e.g. 'Grab the deal', 'Read more') is fine.\n"
@@ -811,6 +840,8 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
         # button at publish time). No homepage fallback — a CTA is only a link when
         # there's a real page to send the reader to.
         out["link_url"] = external_url
+        # Strip any URL the model invented in the body — only the REAL link may stay.
+        out["post_text"] = _sanitize_urls(out.get("post_text"), external_url)
         # link-format posts also carry the URL inline in the body for visibility.
         if fmt == "link" and external_url and external_url not in (out["post_text"] or ""):
             out["post_text"] = f"{out['post_text']}\n\n{external_url}"

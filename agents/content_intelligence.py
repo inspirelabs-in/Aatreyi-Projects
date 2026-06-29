@@ -136,17 +136,37 @@ class ContentIntelligenceAgent(BaseAgent):
         # deals pass article-style relevance scoring (brand names rarely match topic
         # keywords). Pick a deal — preferring one whose brand matches the slot topic —
         # and generate directly so the post always has a real deal + matching link.
-        if is_deals and fresh:
-            item = self._pick_deal_item(fresh, task.get("topic"))
+        #
+        # CRITICAL: a deals channel must NEVER fabricate a deal. We only post from a
+        # REAL scraped item that has a usable link. If scraping found nothing today
+        # (e.g. Amazon/Flipkart blocked the host IP), we SKIP this slot rather than
+        # letting the LLM invent a product/price with a fake (404) link. The slot
+        # stays pending and is retried next cycle.
+        if is_deals:
+            real_deals = [it for it in fresh if (it.get("external_url") or "").strip()]
+            if not real_deals:
+                log.info("deals slot %s skipped: no real deal with a link found (no fabrication)", task_id)
+                return {
+                    "task_id": task_id, "generated_post_id": None, "skipped": True,
+                    "reason": "no_real_deal", "items_fetched": len(items), "items_passing": 0,
+                }
+            item = self._pick_deal_item(real_deals, task.get("topic"))
             content_item_id = await save_content_item(channel_id, item.get("_source_id"), item)
             post = await generate_post(item, task, dna)
+            # Final guard: never queue a deal post without a real link.
+            if not (post.get("link_url") or "").strip():
+                log.info("deals slot %s skipped: generated post had no link", task_id)
+                return {
+                    "task_id": task_id, "generated_post_id": None, "skipped": True,
+                    "reason": "no_link_after_gen", "items_fetched": len(items), "items_passing": len(real_deals),
+                }
             queued = await add_to_review_queue(channel_id, post, task, content_item_id)
             auto = await maybe_auto_publish(channel_id, queued["generated_post_id"])
             return {
                 "task_id": task_id, "generated_post_id": queued["generated_post_id"],
                 "review_status": "approved" if auto.get("auto_published") else "pending",
                 "scheduled_at": queued["scheduled_at"], "used_original": False,
-                "items_fetched": len(items), "items_passing": len(fresh),
+                "items_fetched": len(items), "items_passing": len(real_deals),
                 "auto_published": auto.get("auto_published"),
             }
 

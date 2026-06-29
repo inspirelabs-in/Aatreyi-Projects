@@ -230,8 +230,11 @@ async def generate_content_for_strategy(channel_id: str, client=None, limit: int
             ContentIntelligenceAgent().run(channel_id, task_id=task["id"], client=client),
             f"content/{task['id']}",
         )
-        if res:
-            await mark_task_generated(task["id"], res.get("generated_post_id"))
+        # Only mark a slot generated when a real post was created. Deals slots that
+        # found no real deal are skipped (no generated_post_id) and stay pending so
+        # the next cycle retries — we never fabricate to "fill" a slot.
+        if res and res.get("generated_post_id"):
+            await mark_task_generated(task["id"], res["generated_post_id"])
             n += 1
     return {"generated": n}
 
