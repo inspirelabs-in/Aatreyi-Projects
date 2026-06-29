@@ -245,10 +245,17 @@ def _parse_struct_time(entry) -> datetime | None:
     return None
 
 
+def _scraper_httpx_kwargs() -> dict:
+    """httpx client kwargs with the scraping proxy applied (datacenter IPs get
+    blocked). Empty when SCRAPER_PROXY is unset (direct connection)."""
+    raw = getattr(settings, "SCRAPER_PROXY", None)
+    return {"proxy": raw} if raw else {}
+
+
 async def scrape_website(url: str, topic: str | None = None) -> dict[str, Any]:
     from bs4 import BeautifulSoup
 
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}) as c:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}, **_scraper_httpx_kwargs()) as c:
         resp = await c.get(url)
         resp.raise_for_status()
         html = resp.text
@@ -388,7 +395,8 @@ async def scrape_deal_links(url: str, topic: str | None = None, limit: int = 40)
 
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True,
-                                     headers={"User-Agent": "Mozilla/5.0"}) as c:
+                                     headers={"User-Agent": "Mozilla/5.0"},
+                                     **_scraper_httpx_kwargs()) as c:
             resp = await c.get(url)
             resp.raise_for_status()
             html = resp.text

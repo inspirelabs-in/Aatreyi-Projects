@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     #   mtproxy://host:port:secret_hex
     # Leave empty to connect directly (or use a VPN, which needs no value here).
     TELEGRAM_PROXY: str | None = None
+    # Proxy for WEB SCRAPING (Amazon/Flipkart Playwright + httpx article fetches).
+    # Datacenter IPs (Railway/Render) get blocked by Amazon/Flipkart, so set a
+    # residential/scraping proxy here in production. Format:
+    #   http://user:pass@host:port  |  socks5://user:pass@host:port
+    # Leave empty for direct (works fine locally / on residential IPs).
+    SCRAPER_PROXY: str | None = None
     # Bot API token — only needed for publishing/review bot (Phase 6/7).
     BOT_TOKEN: str | None = None
     ADMIN_TELEGRAM_ID: int | None = None
@@ -114,6 +120,7 @@ class Settings(BaseSettings):
     @field_validator(
         "PHONE_NUMBER",
         "TELEGRAM_PROXY",
+        "SCRAPER_PROXY",
         "BOT_TOKEN",
         "ADMIN_TELEGRAM_ID",
         "ANTHROPIC_API_KEY",

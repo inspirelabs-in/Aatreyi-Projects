@@ -99,6 +99,25 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
 
+# ── Scraping proxy (datacenter IPs get blocked by Amazon/Flipkart) ───────────
+def _playwright_proxy() -> dict | None:
+    """Parse settings.SCRAPER_PROXY into Playwright's proxy dict, or None."""
+    raw = getattr(settings, "SCRAPER_PROXY", None)
+    if not raw:
+        return None
+    from urllib.parse import urlsplit
+    p = urlsplit(raw)
+    if not p.hostname:
+        return None
+    server = f"{p.scheme or 'http'}://{p.hostname}" + (f":{p.port}" if p.port else "")
+    proxy: dict[str, str] = {"server": server}
+    if p.username:
+        proxy["username"] = p.username
+    if p.password:
+        proxy["password"] = p.password
+    return proxy
+
+
 # ── Affiliate links ───────────────────────────────────────────────────────────
 # Amazon ASIN = 10-char alphanumeric product id, found after /dp/, /gp/product/, etc.
 _AMAZON_ASIN_RE = re.compile(r"/(?:dp|gp/product|gp/aw/d|d|product)/([A-Z0-9]{10})", re.IGNORECASE)
@@ -173,7 +192,11 @@ async def scrape_amazon(max_per_category: int = 3, categories: list[dict] | None
     cats = categories or DEAL_CATEGORIES
     deals: list[dict[str, Any]] = []
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        _pl_proxy = _playwright_proxy()
+        _launch_kw = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+        if _pl_proxy:
+            _launch_kw["proxy"] = _pl_proxy
+        browser = await p.chromium.launch(**_launch_kw)
         ctx = await browser.new_context(user_agent=_UA, viewport={"width": 1366, "height": 900},
                                         locale="en-IN")
         page = await ctx.new_page()
@@ -252,7 +275,11 @@ async def scrape_flipkart(max_per_category: int = 3, categories: list[dict] | No
     }
     """
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        _pl_proxy = _playwright_proxy()
+        _launch_kw = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+        if _pl_proxy:
+            _launch_kw["proxy"] = _pl_proxy
+        browser = await p.chromium.launch(**_launch_kw)
         ctx = await browser.new_context(user_agent=_UA, viewport={"width": 1366, "height": 900}, locale="en-IN")
         page = await ctx.new_page()
         for cat in cats:
