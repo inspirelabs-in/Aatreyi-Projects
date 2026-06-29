@@ -94,7 +94,10 @@ class ContentIntelligenceAgent(BaseAgent):
         # yields nothing (e.g. the host's datacenter IP is blocked), fall through
         # to the active sources (grabon.in coupon pages).
         if is_deals:
-            live = await self._fetch_live_deals(sources)
+            # The slot's topic is a CATEGORY chosen by the strategy (e.g. "Fashion
+            # Women", "Headphones") — scrape THAT category so the day's mix matches
+            # the plan, instead of always pulling the same few categories.
+            live = await self._fetch_live_deals(sources, task.get("topic"))
             items.extend(live)
 
         if not items:
@@ -172,14 +175,24 @@ class ContentIntelligenceAgent(BaseAgent):
         }
 
     @staticmethod
-    async def _fetch_live_deals(sources: list[dict]) -> list[dict]:
-        """Scrape today's live Amazon/Flipkart product deals (affiliate-tagged) and
-        adapt them to content items. Returns [] on any failure so the caller falls
-        back to grabon.in coupon pages."""
+    async def _fetch_live_deals(sources: list[dict], topic: str | None = None) -> list[dict]:
+        """Scrape today's live product deals (affiliate-tagged) for the slot's
+        category and adapt them to content items. ``topic`` is the strategy's
+        category for this slot; we scrape that category specifically (falling back
+        to the full set if it doesn't match or yields nothing). Returns [] on any
+        failure so the caller falls back to grabon.in coupon pages."""
         from config import settings
         try:
-            from tools.deal_scrapers import get_fresh_deals, deal_to_content_item
-            deals = await get_fresh_deals(max_per_category=settings.DEAL_MAX_PER_CATEGORY)
+            from tools.deal_scrapers import (
+                get_fresh_deals, deal_to_content_item, resolve_deal_categories,
+            )
+            cats = resolve_deal_categories(topic) or None
+            # Scrape a few per category so a single-category slot still has choices.
+            per_cat = settings.DEAL_MAX_PER_CATEGORY if not cats else max(settings.DEAL_MAX_PER_CATEGORY, 4)
+            deals = await get_fresh_deals(max_per_category=per_cat, categories=cats)
+            if not deals and cats:
+                # category had nothing today -> fall back to the full set
+                deals = await get_fresh_deals(max_per_category=settings.DEAL_MAX_PER_CATEGORY)
         except Exception:
             return []
         src_id = sources[0]["id"] if sources else None

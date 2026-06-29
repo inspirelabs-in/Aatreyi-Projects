@@ -210,15 +210,15 @@ async def onboard_channel_pipeline(channel_id: str) -> dict:
 
 
 async def generate_content_for_strategy(channel_id: str, client=None, limit: int | None = None) -> dict:
-    """Generate content for pending slots of a channel's active strategy.
+    """Generate content for the channel's active strategy — TODAY's slots only.
 
-    For ephemeral-content categories (deals, shopping, coupons) only slots within
-    the next 2 days are generated — deals expire, so generating a week in advance
-    produces stale content. The daily cycle regenerates each morning."""
-    ctx = await get_channel_context(channel_id)
-    category = (ctx.get("category") or "").lower().strip()
-    days_ahead = 2 if category in EPHEMERAL_CATEGORIES else None
-    tasks = await get_pending_tasks_for_channel(channel_id, days_ahead=days_ahead)
+    The strategy still plans the whole period (the dated week is visible in the
+    UI), but we only generate posts for slots scheduled today (plus any overdue
+    pending ones), for EVERY channel. The daily cycle runs each morning and
+    generates that day's slots — so content is always fresh and we never burn
+    LLM calls generating a week of posts in advance that may go stale."""
+    # days_ahead=0 -> cutoff is today -> only slots scheduled on/before today.
+    tasks = await get_pending_tasks_for_channel(channel_id, days_ahead=0)
     if limit:
         tasks = tasks[:limit]
     if not tasks:

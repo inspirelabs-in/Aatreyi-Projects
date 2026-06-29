@@ -465,8 +465,8 @@ def compute_strategy(
     scores = _hour_scores(best_local, local_by_hour)
     slot_hours = greedy_select_slots(scores, slots_per_day)  # local hours
 
-    # dates
-    ps = date.fromisoformat(period_start) if period_start else date.today() + timedelta(days=1)
+    # dates  - default to a plan that starts today (so today's slots exist).
+    ps = date.fromisoformat(period_start) if period_start else date.today()
     days = _DAYS_BY_TYPE.get(strategy_type, 7)
     pe = date.fromisoformat(period_end) if period_end else ps + timedelta(days=days - 1)
 
@@ -639,6 +639,9 @@ async def save_strategy(channel_id: str | uuid.UUID, strategy_payload: dict) -> 
                 "benchmark": strategy_payload.get("benchmark"),
                 "fatigue": strategy_payload.get("fatigue"),
                 "competitor_insights": strategy_payload.get("competitor_insights"),
+                # Recommendation engine (LLM strategist): growth + retention.
+                "growth_recommendations": strategy_payload.get("growth_recommendations"),
+                "retention_recommendations": strategy_payload.get("retention_recommendations"),
             },
             status=StrategyStatus.active,
         )

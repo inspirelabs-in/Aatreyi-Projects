@@ -24,6 +24,7 @@ from tools.strategy import (
     save_strategy,
     update_cron_for_content_agent,
 )
+from tools.strategy_llm import llm_enrich_strategy
 
 _TRIGGER_BY_TYPE = {"daily": "cron_daily", "weekly": "cron_weekly", "monthly": "cron_monthly"}
 
@@ -40,9 +41,10 @@ class StrategyAgent(BaseAgent):
         if not inputs.get("channel"):
             raise ValueError(f"Channel {channel_id} not found")
 
-        # period: daily -> tomorrow; weekly -> next 7 days; monthly -> next 30
+        # period STARTS TODAY so today's slots exist and can be generated right
+        # away. daily -> just today; weekly -> today + next 6; monthly -> today + 29.
         days = {"daily": 1, "weekly": 7, "monthly": 30}.get(self.strategy_type, 7)
-        ps = date.today() + timedelta(days=1)
+        ps = date.today()
         pe = ps + timedelta(days=days - 1)
 
         # archive any overlapping active strategy first (preserves approved/published)
@@ -52,6 +54,10 @@ class StrategyAgent(BaseAgent):
             inputs, strategy_type=self.strategy_type,
             period_start=ps.isoformat(), period_end=pe.isoformat(),
         )
+        # Strategist pass: an LLM reads the channel's own posts + competitors' best
+        # posts and rewrites the soft parts of the plan (goal, tactics, per-slot
+        # topic/format/angle). No-ops back to the rule-based plan on any failure.
+        payload = await llm_enrich_strategy(channel_id, payload, inputs)
         payload["strategy_type"] = self.strategy_type
         saved = await save_strategy(channel_id, payload)
         cron = await update_cron_for_content_agent(channel_id, payload["tasks"])
@@ -63,6 +69,8 @@ class StrategyAgent(BaseAgent):
             "content_mix": payload["content_mix"],
             "primary_topics": payload["primary_topics"],
             "growth_tactics": payload["growth_tactics"],
+            "growth_recommendations": payload.get("growth_recommendations"),
+            "retention_recommendations": payload.get("retention_recommendations"),
             "cron_jobs_created": cron["cron_jobs_created"],
             "period_start": payload["period_start"],
             "period_end": payload["period_end"],

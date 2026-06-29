@@ -59,6 +59,38 @@ DEAL_CATEGORIES: list[dict[str, str]] = [
     {"category": "Grocery",        "amazon_kw": "grocery gourmet",    "amazon_i": "grocery",     "flipkart_kw": "grocery"},
 ]
 
+
+def resolve_deal_categories(name: str | None) -> list[dict[str, str]]:
+    """Map a strategy slot's category label onto DEAL_CATEGORIES entries.
+
+    The strategy assigns a broad category per slot (e.g. "Fashion Women",
+    "Headphones"); this finds the matching scrape config so the slot pulls deals
+    from THAT category. Returns [] when there's no confident match (caller then
+    scrapes the full category set as a fallback)."""
+    if not name:
+        return []
+    n = name.strip().lower()
+    exact = [c for c in DEAL_CATEGORIES if c["category"].lower() == n]
+    if exact:
+        return exact
+    # substring either direction, then keyword overlap
+    subs = [c for c in DEAL_CATEGORIES
+            if c["category"].lower() in n or n in c["category"].lower()
+            or n in c["amazon_kw"].lower() or n in c["flipkart_kw"].lower()]
+    if subs:
+        return subs
+    import re as _re
+    n_tok = {w for w in _re.findall(r"[a-z0-9]+", n) if len(w) > 2}
+    scored = []
+    for c in DEAL_CATEGORIES:
+        hay = f"{c['category']} {c['amazon_kw']} {c['flipkart_kw']}".lower()
+        c_tok = {w for w in _re.findall(r"[a-z0-9]+", hay) if len(w) > 2}
+        ov = len(n_tok & c_tok)
+        if ov:
+            scored.append((ov, c))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:1]]
+
 # Amazon India discount filter nodes (rh=p_n_pct-off-with-tax:<node>).
 # We scrape the 60%+ node (broad) and apply the 80%/65% policy in Python.
 _AMAZON_NODE_60 = "2665394031"
