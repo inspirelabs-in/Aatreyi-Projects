@@ -74,6 +74,10 @@ services:
     build:
       context: ./ui
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_* is baked at build time. For local dev the browser talks to
+      # the API on the host at :8000 (no nginx proxy), so bake that absolute URL.
+      args:
+        NEXT_PUBLIC_API_BASE: "http://localhost:8000"
     container_name: tga_ui
     ports:
       - "3000:3000"
