@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     # team tag; Flipkart left blank until the tech team provides one.
     AMAZON_AFFILIATE_TAG: str = Field(default="tlg022-21")
     FLIPKART_AFFILIATE_TAG: str | None = None
+    # Full Flipkart affiliate query string appended after the product path
+    # (replaces the product's own ?pid=...&lid=... query). affid + tracking params.
+    FLIPKART_AFFILIATE_PARAMS: str = Field(default="affid=bh7162&affExtParam1=1005&affExtParam2=gb")
     # Discount policy: prefer >= PREFERRED%, fall back no lower than MIN%.
     DEAL_PREFERRED_DISCOUNT: int = Field(default=80)
     DEAL_MIN_DISCOUNT: int = Field(default=65)

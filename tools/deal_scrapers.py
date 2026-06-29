@@ -68,18 +68,53 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 
 # ── Affiliate links ───────────────────────────────────────────────────────────
+# Amazon ASIN = 10-char alphanumeric product id, found after /dp/, /gp/product/, etc.
+_AMAZON_ASIN_RE = re.compile(r"/(?:dp|gp/product|gp/aw/d|d|product)/([A-Z0-9]{10})", re.IGNORECASE)
+
+
+def _amazon_asin(url: str) -> str | None:
+    """Pull the ASIN out of any Amazon product URL.
+
+    e.g. https://www.amazon.in/AYSIS-.../dp/B0H416WF2T?ref=...&th=1  ->  B0H416WF2T
+    """
+    if not url:
+        return None
+    m = _AMAZON_ASIN_RE.search(url)
+    if m:
+        return m.group(1).upper()
+    # Fallback: a bare 10-char ASIN sitting as its own path segment.
+    m = re.search(r"/([A-Z0-9]{10})(?:[/?]|$)", url)
+    return m.group(1).upper() if m else None
+
+
 def build_affiliate_link(product_url: str, platform: str) -> str:
-    """Append the configured affiliate tag. Amazon -> ?tag=<AMAZON_AFFILIATE_TAG>;
-    Flipkart -> append tag only if FLIPKART_AFFILIATE_TAG is set, else raw URL."""
+    """Wrap a scraped product URL in our affiliate link.
+
+    Amazon   -> https://www.amazon.in/dp/<ASIN>/?tag=<AMAZON_AFFILIATE_TAG>
+                (extract the ASIN after /dp/; drop the rest of the original URL)
+    Flipkart -> <product-path>?<FLIPKART_AFFILIATE_PARAMS>
+                (strip the product's own ?pid=...&lid=... query, then append ours)
+    """
     if not product_url:
         return product_url
-    base = product_url.split("?")[0].rstrip("/")
-    if platform == "Amazon" or "amazon.in" in product_url:
+    is_amazon = platform == "Amazon" or "amazon." in product_url
+    is_flipkart = platform == "Flipkart" or "flipkart.com" in product_url
+
+    if is_amazon:
         tag = settings.AMAZON_AFFILIATE_TAG
+        asin = _amazon_asin(product_url)
+        if asin:
+            link = f"https://www.amazon.in/dp/{asin}/"
+            return f"{link}?tag={tag}" if tag else link
+        # ASIN not found: tag the cleaned URL as-is rather than dropping the link.
+        base = product_url.split("?")[0].rstrip("/")
         return f"{base}/?tag={tag}" if tag else base
-    if platform == "Flipkart" or "flipkart.com" in product_url:
-        tag = settings.FLIPKART_AFFILIATE_TAG
-        return f"{base}?affid={tag}" if tag else product_url
+
+    if is_flipkart:
+        base = product_url.split("?")[0].rstrip("/")  # remove everything from '?' on
+        params = settings.FLIPKART_AFFILIATE_PARAMS
+        return f"{base}?{params}" if params else base
+
     return product_url
 
 
