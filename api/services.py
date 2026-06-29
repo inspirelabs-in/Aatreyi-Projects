@@ -189,6 +189,7 @@ async def get_strategy(session: AsyncSession, channel_id: str) -> dict | None:
         "benchmark": (strat.analysis or {}).get("benchmark"),
         "fatigue": (strat.analysis or {}).get("fatigue"),
         "competitor_insights": (strat.analysis or {}).get("competitor_insights") or [],
+        "competitor_intelligence": (strat.analysis or {}).get("competitor_intelligence") or {},
         "growth_recommendations": (strat.analysis or {}).get("growth_recommendations") or [],
         "retention_recommendations": (strat.analysis or {}).get("retention_recommendations") or [],
         "period_start": strat.period_start.isoformat() if strat.period_start else None,
@@ -229,6 +230,9 @@ async def get_competitors(session: AsyncSession, channel_id: str) -> list[dict]:
             "rank_score": r.rank_score,
             "source": r.source.value if r.source else None,
             "has_disappearing_messages": r.has_disappearing_messages,
+            "competitor_type": r.competitor_type,
+            "similarity_breakdown": r.similarity_breakdown,
+            "intelligence": r.intelligence,
         }
         for r in rows
     ]

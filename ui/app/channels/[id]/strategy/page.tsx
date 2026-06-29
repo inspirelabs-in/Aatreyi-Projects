@@ -138,6 +138,44 @@ export default function StrategyPage() {
         </Collapsible>
       )}
 
+      {data.competitor_intelligence && (
+        ((data.competitor_intelligence.opportunities || []).length > 0 ||
+         (data.competitor_intelligence.content_gaps || []).length > 0 ||
+         (data.competitor_intelligence.emerging_trends || []).length > 0) && (
+        <Collapsible title="🔍 Competitor intelligence (facts)">
+          {(data.competitor_intelligence.opportunities || []).length > 0 && (
+            <ul className="space-y-1.5">
+              {(data.competitor_intelligence.opportunities || []).map((o, i) => (
+                <li key={i} className="rounded-lg bg-slate-50 p-2.5 text-sm text-slate-700">{o}</li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {(data.competitor_intelligence.content_gaps || []).length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase text-slate-500">Content gaps</div>
+                <div className="flex flex-wrap gap-1">
+                  {(data.competitor_intelligence.content_gaps || []).map((t) => (
+                    <Badge key={t} tone="amber">{t}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(data.competitor_intelligence.emerging_trends || []).length > 0 && (
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase text-slate-500">Emerging trends</div>
+                <div className="flex flex-wrap gap-1">
+                  {(data.competitor_intelligence.emerging_trends || []).map((t) => (
+                    <Badge key={t} tone="blue">{t}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Collapsible>
+        )
+      )}
+
       {(data.competitor_insights || []).length > 0 && (
         <Collapsible title="Competitor insights (similarity-ranked)">
           <div className="space-y-3">
@@ -145,6 +183,9 @@ export default function StrategyPage() {
               <div key={i} className="rounded-lg border border-edge bg-white p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-slate-800">@{c.username}</span>
+                  {c.competitor_type && (
+                    <Badge tone={c.competitor_type === "direct" ? "red" : c.competitor_type === "aspirational" ? "amber" : "slate"}>{c.competitor_type}</Badge>
+                  )}
                   <Badge tone="blue">{Math.round(c.topic_similarity * 100)}% topic overlap</Badge>
                   {c.avg_er != null && (
                     <span className="inline-flex items-center gap-1">
@@ -152,9 +193,8 @@ export default function StrategyPage() {
                       <InfoTooltip text="This competitor's engagement rate — used to calibrate your target ER for the strategy period." />
                     </span>
                   )}
-                  {c.content_similarity > 0 && (
-                    <Badge tone="slate">{Math.round(c.content_similarity * 100)}% content match</Badge>
-                  )}
+                  {c.best_format && <Badge tone="slate">best: {c.best_format}</Badge>}
+                  {c.best_time && <Badge tone="slate">peaks {c.best_time}</Badge>}
                 </div>
                 {c.top_themes.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
@@ -162,6 +202,9 @@ export default function StrategyPage() {
                       <span key={t} className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{t}</span>
                     ))}
                   </div>
+                )}
+                {(c.strengths || []).length > 0 && (
+                  <p className="mt-2 text-xs text-slate-500"><span className="font-medium">Strengths: </span>{(c.strengths || []).join("; ")}</p>
                 )}
                 <p className="mt-2 text-sm text-slate-600">{c.recommendation}</p>
               </div>

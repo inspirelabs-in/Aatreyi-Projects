@@ -84,7 +84,8 @@ export interface Strategy {
   diagnosis?: string | null;
   benchmark?: { competitor_avg_er: number | null; my_avg_er: number | null; target_er: number | null } | null;
   fatigue?: { score: number; flags: string[] } | null;
-  competitor_insights?: { username: string; topic_similarity: number; content_similarity: number; avg_er: number | null; top_themes: string[]; recommendation: string }[] | null;
+  competitor_insights?: { username: string; competitor_type?: string | null; topic_similarity: number; content_similarity: number; avg_er: number | null; post_frequency_per_day?: number | null; top_themes: string[]; best_format?: string | null; best_time?: string | null; strengths?: string[]; recommendation: string }[] | null;
+  competitor_intelligence?: { content_gaps?: string[]; emerging_trends?: string[]; best_schedule?: number[]; best_media_mix?: Record<string, number>; best_cta?: string[]; opportunities?: string[] } | null;
   growth_recommendations?: { recommendation: string; why?: string }[] | null;
   retention_recommendations?: { recommendation: string; why?: string }[] | null;
   period_start: string | null;

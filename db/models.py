@@ -259,6 +259,11 @@ class Competitor(Base):
     rank_score: Mapped[float | None] = mapped_column(Float)
     topic_similarity: Mapped[float | None] = mapped_column(Float)
     content_similarity: Mapped[float | None] = mapped_column(Float)
+    # Competitor Intelligence engine (spec): classification + similarity breakdown
+    # + per-competitor analysis blob (media mix, best hours, CTA, strengths, etc.).
+    competitor_type: Mapped[str | None] = mapped_column(String(16))  # direct|aspirational|adjacent
+    similarity_breakdown: Mapped[dict | None] = mapped_column(JSONB)  # weighted sub-scores
+    intelligence: Mapped[dict | None] = mapped_column(JSONB)          # analysis (no recommendations)
     has_disappearing_messages: Mapped[bool] = mapped_column(Boolean, default=False)
     discovered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

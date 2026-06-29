@@ -47,6 +47,14 @@ from tools.competitor import (
     rank_competitors,
     save_competitors,
 )
+from tools.competitor_intel import (
+    analyze_posts,
+    build_channel_intelligence,
+    classify,
+    llm_analyze_competitor,
+    load_my_profile,
+    similarity_breakdown,
+)
 from tools.shared import get_channel_posts, get_telegram_channel_info
 from tools.telegram_client import telethon_session
 
@@ -254,10 +262,44 @@ class CompetitorIntelligenceAgent(BaseAgent):
         keywords = channel_keyword_set(category, ctx.get("sub_category"), topics)
         with_metrics = rank_competitors([e for e in all_entries if e["on_telegram"]], keywords)
         market_only = [e for e in all_entries if not e["on_telegram"]]
+
+        # 8b. COMPETITOR INTELLIGENCE (per spec): weighted similarity sub-scores,
+        #     direct/aspirational/adjacent classification, and deep per-competitor
+        #     analysis (media mix, best hours, CTA, strengths/weaknesses, why-won).
+        #     Intelligence only — no recommendations. Re-rank by the spec-weighted
+        #     similarity so the order reflects Audience/Topic/Lang/Format/Freq/Size.
+        my_profile = await load_my_profile(channel_id)
+        my_subs = my_profile.get("subscriber_count") or ctx.get("subscriber_count")
+        INTEL_LLM_LIMIT = 8  # cap LLM calls per run
+        for i, e in enumerate(with_metrics):
+            analysis = analyze_posts(e.get("posts") or [])
+            llm = (await llm_analyze_competitor(
+                e.get("display_name") or e.get("username"), category, analysis.get("top_posts"))
+                if i < INTEL_LLM_LIMIT else {})
+            e["intelligence"] = {**analysis, **llm}
+            bd = similarity_breakdown(my_profile, {
+                "topic_similarity": e.get("topic_similarity"),
+                "candidate_topics": e.get("candidate_topics"),
+                "media_mix": analysis.get("media_mix"),
+                "post_frequency_per_day": e.get("post_frequency_per_day"),
+                "subscriber_count": e.get("subscriber_count"),
+                "language": e.get("language"),
+                "category": category,
+            })
+            e["similarity_breakdown"] = bd
+            e["rank_score"] = bd["total"]  # spec-weighted similarity drives the rank
+            e["competitor_type"] = classify(e.get("topic_similarity"), my_subs, e.get("subscriber_count"))
+        with_metrics.sort(key=lambda c: c.get("rank_score") or 0, reverse=True)
+        for i, e in enumerate(with_metrics, 1):
+            e["rank"] = i
         for i, e in enumerate(market_only, start=len(with_metrics) + 1):
             e["rank"] = i
             e["rank_score"] = None
+            e["competitor_type"] = "adjacent"
         ordered = (with_metrics + market_only)[:TOP_N]
+
+        # 8c. Channel-level intelligence (facts only — gaps, trends, schedule, opps).
+        channel_intel = build_channel_intelligence(with_metrics, my_profile)
 
         benchmarks = compute_benchmarks(with_metrics, {"avg_er": ctx.get("avg_er")})
         run_started = datetime.now(timezone.utc)
@@ -282,6 +324,12 @@ class CompetitorIntelligenceAgent(BaseAgent):
             "saved": saved["upserted"],
             "sources_used": sorted(set(sources_used)),
             "benchmarks": benchmarks,
+            "competitor_intelligence": channel_intel,
+            "classification": {
+                "direct": [c["username"] for c in with_metrics if c.get("competitor_type") == "direct"][:5],
+                "aspirational": [c["username"] for c in with_metrics if c.get("competitor_type") == "aspirational"][:3],
+                "adjacent": [c["username"] for c in with_metrics if c.get("competitor_type") == "adjacent"][:3],
+            },
             "top_10": [
                 {"name": c["display_name"], "username": c["username"] if c["on_telegram"] else None,
                  "rank": c["rank"], "subscriber_count": c.get("subscriber_count"), "avg_er": c.get("avg_er")}

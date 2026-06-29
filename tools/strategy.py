@@ -350,15 +350,24 @@ def build_growth_tactics(avg_er, churn_signal, subscriber_delta, competitors, my
 
 
 def _build_competitor_insights(competitors: list[dict]) -> list[dict]:
-    """Top similar competitors with actionable insights for the strategy page."""
+    """Per-competitor insight cards (spec §8): similarity, ER, frequency, strongest
+    topics, best posting time, best format, classification — from the Competitor
+    Intelligence engine's stored analysis."""
     insights = []
-    for c in sorted(competitors, key=lambda x: x.get("topic_similarity") or 0, reverse=True)[:3]:
+    for c in sorted(competitors, key=lambda x: x.get("topic_similarity") or 0, reverse=True)[:5]:
         ts = c.get("topic_similarity")
         avg_er = c.get("avg_er")
         themes = [str(t) for t in (c.get("top_themes") or [])[:4]]
+        intel = c.get("intelligence") or {}
+        mix = intel.get("media_mix") or {}
+        best_format = max(mix, key=mix.get) if mix else None
+        best_hours = intel.get("best_hours") or []
+        best_time = f"{best_hours[0]:02d}:00" if best_hours else None
+        ctype = c.get("competitor_type")
         if ts is not None:
             rec = (
-                f"Direct niche peer ({round(ts * 100)}% overlap) - study their hook style and format mix"
+                f"{(ctype or 'Niche').title()} peer ({round(ts * 100)}% overlap) - "
+                f"study their {best_format or 'top'} format and hooks"
                 if avg_er else
                 f"High topic overlap ({round(ts * 100)}%) - monitor for topic gaps and content patterns"
             )
@@ -366,10 +375,15 @@ def _build_competitor_insights(competitors: list[dict]) -> list[dict]:
             rec = "Competitor discovered - run competitor agent again to get similarity and ER data"
         insights.append({
             "username": c.get("username"),
+            "competitor_type": ctype,
             "topic_similarity": round(ts, 2) if ts is not None else None,
             "content_similarity": round(c.get("content_similarity") or 0, 2),
             "avg_er": avg_er,
+            "post_frequency_per_day": c.get("post_frequency_per_day"),
             "top_themes": themes,
+            "best_format": best_format,
+            "best_time": best_time,
+            "strengths": (intel.get("strengths") or [])[:3],
             "recommendation": rec,
         })
     return insights
@@ -540,6 +554,16 @@ def compute_strategy(
             goal += f". Close ER gap to competitor avg {bench_er}% (current {avg_er}%)"
     diagnosis = build_diagnosis(avg_er, sub_delta, churn, bench_er, tactics)
     competitor_insights = _build_competitor_insights(competitors)
+    # Channel-level competitor intelligence (facts only: gaps, trends, best
+    # schedule/media-mix/CTA, opportunities), aggregated from the stored
+    # per-competitor analysis. Lazy import avoids a circular import.
+    try:
+        from tools.competitor_intel import build_channel_intelligence
+        competitor_intelligence = build_channel_intelligence(
+            competitors, {"top_topics": [str(t).lower() for t in (dna.get("top_topics") or [])]}
+        )
+    except Exception:
+        competitor_intelligence = {}
     return {
         "goal": goal,
         "diagnosis": diagnosis,
@@ -553,6 +577,7 @@ def compute_strategy(
             "target_er": target_er,
         },
         "competitor_insights": competitor_insights,
+        "competitor_intelligence": competitor_intelligence,
         "retention_plan": retention_triggers,
         "fatigue": fatigue,
         "period_start": ps.isoformat(),
@@ -641,6 +666,7 @@ async def save_strategy(channel_id: str | uuid.UUID, strategy_payload: dict) -> 
                 "benchmark": strategy_payload.get("benchmark"),
                 "fatigue": strategy_payload.get("fatigue"),
                 "competitor_insights": strategy_payload.get("competitor_insights"),
+                "competitor_intelligence": strategy_payload.get("competitor_intelligence"),
                 # Recommendation engine (LLM strategist): growth + retention.
                 "growth_recommendations": strategy_payload.get("growth_recommendations"),
                 "retention_recommendations": strategy_payload.get("retention_recommendations"),
@@ -954,6 +980,12 @@ async def load_strategy_inputs(channel_id: str | uuid.UUID) -> dict[str, Any]:
                 "top_themes": c.top_content_themes,
                 "topic_similarity": c.topic_similarity,
                 "content_similarity": c.content_similarity,
+                # Competitor Intelligence engine fields (consumed by the strategy).
+                "competitor_type": c.competitor_type,
+                "subscriber_count": c.subscriber_count,
+                "post_frequency_per_day": c.post_frequency_per_day,
+                "similarity_breakdown": c.similarity_breakdown,
+                "intelligence": c.intelligence,
             }
             for c in comps
         ],

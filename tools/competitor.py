@@ -771,6 +771,9 @@ async def save_competitors(channel_id: str | uuid.UUID, competitors: list[dict])
                 rank_score=c.get("rank_score"),
                 topic_similarity=c.get("topic_similarity"),
                 content_similarity=c.get("content_similarity"),
+                competitor_type=c.get("competitor_type"),
+                similarity_breakdown=c.get("similarity_breakdown"),
+                intelligence=c.get("intelligence"),
                 has_disappearing_messages=bool(c.get("has_disappearing_messages")),
                 refreshed_at=datetime.now(timezone.utc),
             )

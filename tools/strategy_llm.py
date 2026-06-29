@@ -92,6 +92,25 @@ def _fmt_posts(posts: list[dict], with_er: bool = False) -> str:
     return "\n".join(lines) if lines else "(none available)"
 
 
+def _fmt_competitor_intel(ci: dict | None) -> str:
+    """Competitor intelligence facts for the strategist to ground recommendations."""
+    if not ci:
+        return ""
+    parts = []
+    if ci.get("content_gaps"):
+        parts.append(f"- Content gaps (competitors cover, we don't): {', '.join(ci['content_gaps'][:6])}")
+    if ci.get("emerging_trends"):
+        parts.append(f"- Emerging trends in competitor posts: {', '.join(ci['emerging_trends'][:6])}")
+    if ci.get("best_schedule"):
+        parts.append(f"- Competitor peak hours: {', '.join(f'{h:02d}:00' for h in ci['best_schedule'][:4])}")
+    if ci.get("best_media_mix"):
+        parts.append(f"- Competitor media mix: {ci['best_media_mix']}")
+    for o in (ci.get("opportunities") or [])[:4]:
+        parts.append(f"- {o}")
+    return ("COMPETITOR INTELLIGENCE (use as evidence for recommendations):\n"
+            + "\n".join(parts) + "\n\n") if parts else ""
+
+
 def _canonical_category(name: str, vocab: list[str]) -> str | None:
     if not name:
         return None
@@ -155,6 +174,7 @@ def _build_prompt(ctx: dict) -> tuple[str, str]:
         f"THE CHANNEL'S OWN POSTS (some marked high engagement):\n{_fmt_posts(ctx['own_posts'])}\n\n"
         f"COMPETITORS' BEST POSTS (highest engagement first):\n"
         f"{_fmt_posts(ctx['competitor_posts'], with_er=True)}\n\n"
+        f"{_fmt_competitor_intel(ctx.get('competitor_intelligence'))}"
         f"{vocab_line}\n\n"
         f"Return JSON in EXACTLY this shape:\n{schema}\n\nJSON:"
     )
@@ -223,6 +243,7 @@ async def llm_enrich_strategy(
             "best_hour": dna.get("best_post_hour"),
             "er_by_format": inputs.get("er_by_format"),
             "own_posts": own_posts, "competitor_posts": competitor_posts,
+            "competitor_intelligence": payload.get("competitor_intelligence"),
         }
         system, user = _build_prompt(ctx)
         raw = await chat_complete(system, user, max_tokens=900, temperature=0.4)
