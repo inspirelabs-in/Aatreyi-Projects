@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     DEAL_MAX_PER_CATEGORY: int = Field(default=3)
     # Hour (local/IST, 0-23) for the dedicated daily deals refresh job.
     DEAL_REFRESH_HOUR: int = Field(default=8)
+    # No-repeat window: a deal/article URL — and, for deals, the same product
+    # (by title) — won't be reposted on a channel within this many days.
+    DEDUP_WINDOW_DAYS: int = Field(default=30)
 
     # ── Content scoring defaults ─────────────────────────────────────────────
     SCORE_THRESHOLD: int = Field(default=4)

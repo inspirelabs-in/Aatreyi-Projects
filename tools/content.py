@@ -441,9 +441,63 @@ async def scrape_deal_links(url: str, topic: str | None = None, limit: int = 40)
     return items
 
 
+# ── No-repeat de-duplication ─────────────────────────────────────────────────
+_TITLE_STOP = {
+    "the", "a", "an", "for", "with", "and", "new", "best", "top", "off", "deal",
+    "deals", "offer", "offers", "sale", "at", "on", "in", "of", "to", "buy", "get",
+    "now", "today", "loot", "flat", "upto", "up", "rs", "only", "free", "price",
+}
+
+
+def _title_fingerprint(title: str | None) -> frozenset:
+    """Significant tokens of a product title (brand/model words), stop-words and
+    pure numbers removed — used to detect the SAME product across different URLs."""
+    toks = {
+        w for w in re.findall(r"[a-z0-9]+", (title or "").lower())
+        if len(w) > 2 and w not in _TITLE_STOP and not w.isdigit()
+    }
+    return frozenset(toks)
+
+
+async def recent_title_fingerprints(channel_id: str | uuid.UUID) -> list[frozenset]:
+    """Title fingerprints of items already posted on this channel in the window."""
+    cid = uuid.UUID(str(channel_id))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.DEDUP_WINDOW_DAYS)
+    async with AsyncSessionLocal() as session:
+        titles = (
+            await session.execute(
+                select(ContentItem.title).where(
+                    ContentItem.channel_id == cid,
+                    ContentItem.fetched_at >= cutoff,
+                    ContentItem.title.isnot(None),
+                )
+            )
+        ).scalars().all()
+    return [fp for t in titles if (fp := _title_fingerprint(t))]
+
+
+def is_title_dupe(title: str | None, seen: list[frozenset], threshold: float = 0.6) -> bool:
+    """True if `title` is the same product as a recently-posted one. Uses the
+    OVERLAP COEFFICIENT (|A∩B| / min(|A|,|B|)) so a shorter re-listing of the same
+    product (a subset of tokens) still matches, while genuinely different products
+    in the same category (few shared tokens) don't. Catches the same product
+    re-listed under a different URL / platform."""
+    fp = _title_fingerprint(title)
+    if len(fp) < 2:
+        return False  # too generic to judge — don't over-block
+    for other in seen:
+        denom = min(len(fp), len(other))
+        if not denom:
+            continue
+        inter = len(fp & other)
+        if inter >= 2 and inter / denom >= threshold:
+            return True
+    return False
+
+
 async def check_url_used(channel_id: str | uuid.UUID, external_url: str) -> dict[str, Any]:
     cid = uuid.UUID(str(channel_id))
-    cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.DEDUP_WINDOW_DAYS)
     async with AsyncSessionLocal() as session:
         row = (
             await session.execute(
@@ -497,7 +551,7 @@ async def load_content_context(channel_id: str | uuid.UUID) -> dict[str, Any]:
             await session.execute(
                 select(GeneratedPost.post_text)
                 .where(GeneratedPost.channel_id == cid,
-                       GeneratedPost.created_at >= datetime.now(timezone.utc) - timedelta(days=30))
+                       GeneratedPost.created_at >= datetime.now(timezone.utc) - timedelta(days=settings.DEDUP_WINDOW_DAYS))
             )
         ).scalars().all()
         comp_posts = (

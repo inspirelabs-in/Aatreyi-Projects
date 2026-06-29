@@ -20,6 +20,8 @@ log = logging.getLogger(__name__)
 from tools.content import (
     add_to_review_queue,
     check_url_used,
+    recent_title_fingerprints,
+    is_title_dupe,
     fetch_content_sources,
     fetch_rss_feed,
     generate_original_post,
@@ -144,11 +146,16 @@ class ContentIntelligenceAgent(BaseAgent):
         # stays pending and is retried next cycle.
         if is_deals:
             real_deals = [it for it in fresh if (it.get("external_url") or "").strip()]
+            # Product-level no-repeat: drop deals whose PRODUCT (by title) was already
+            # posted recently — even if the URL/platform differs. URL dedup (above)
+            # only catches identical links; this catches the same item re-listed.
+            seen_titles = await recent_title_fingerprints(channel_id)
+            real_deals = [it for it in real_deals if not is_title_dupe(it.get("title"), seen_titles)]
             if not real_deals:
-                log.info("deals slot %s skipped: no real deal with a link found (no fabrication)", task_id)
+                log.info("deals slot %s skipped: no fresh deal (none found or all recently posted)", task_id)
                 return {
                     "task_id": task_id, "generated_post_id": None, "skipped": True,
-                    "reason": "no_real_deal", "items_fetched": len(items), "items_passing": 0,
+                    "reason": "no_fresh_deal", "items_fetched": len(items), "items_passing": 0,
                 }
             item = self._pick_deal_item(real_deals, task.get("topic"))
             content_item_id = await save_content_item(channel_id, item.get("_source_id"), item)
