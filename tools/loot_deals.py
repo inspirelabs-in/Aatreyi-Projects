@@ -24,6 +24,7 @@ from typing import Any
 
 from config import settings
 from tools.content import _title_fingerprint, is_title_dupe
+from tools.deal_scrapers import is_junk_title
 
 # Broad headings (ordered) -> the scrape categories that fall under them.
 LOOT_BUCKETS: list[tuple[str, set[str]]] = [
@@ -84,12 +85,15 @@ def daily_plan() -> list[tuple[str, str | None]]:
     return plan
 
 
-def _label(deal: dict, max_len: int = 52) -> str:
-    """Short, human label for a loot line: trimmed title + discount."""
+def _label(deal: dict, max_len: int = 60) -> str:
+    """Short, human label for a loot line: clean title (trimmed at a WORD boundary
+    so it never cuts mid-word) + discount."""
     title = " ".join((deal.get("title") or "").split())
     pct = deal.get("discount_pct")
-    base = title[:max_len].rstrip(" -–|")
-    return f"{base} ({pct}% OFF)" if pct else base
+    if len(title) > max_len:
+        # cut at the last whole word within max_len, then add an ellipsis
+        title = title[:max_len].rsplit(" ", 1)[0].rstrip(" -–|,·") + "…"
+    return f"{title} ({pct}% OFF)" if pct else title
 
 
 def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
@@ -111,6 +115,8 @@ def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
                 continue
             url = (d.get("affiliate_url") or d.get("product_url") or "").strip()
             if not url:
+                continue
+            if is_junk_title(d.get("title")):
                 continue
             if is_title_dupe(d.get("title"), used_fps):
                 continue
@@ -139,6 +145,7 @@ def build_single_deal_post(
     cands = [d for d in deals
              if (d.get("platform") == platform)
              and (d.get("affiliate_url") or d.get("product_url"))
+             and not is_junk_title(d.get("title"))
              and not is_title_dupe(d.get("title"), seen)]
     if not cands:
         return None

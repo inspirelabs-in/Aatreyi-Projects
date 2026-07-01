@@ -178,6 +178,39 @@ def build_affiliate_link(product_url: str, platform: str) -> str:
     return product_url
 
 
+# Card texts that are NOT product names — stock/rating/marketing badges that the
+# Flipkart/Ajio DOM walk can otherwise mistake for a title (e.g. "Only few left").
+_JUNK_TITLE_RE = re.compile(
+    r"^(only\s+\d*\s*(few\s+)?left|few\s+left|\d+\s+left|in\s+stock|out\s+of\s+stock|"
+    r"best\s*seller|sponsored|assured|new\b|trending|deal of the day|limited (time|deal)|"
+    r"add to cart|buy now|hurry|\(?\d[\d,]*\)?|\d+(\.\d+)?\s*(out of\s*5|/\s*5)?|"
+    r"\(?\d[\d,]*\s*(ratings?|reviews?)\)?|free delivery|bank offer)$",
+    re.I,
+)
+
+
+def is_junk_title(t: str | None) -> bool:
+    """True when a scraped 'title' is a badge/rating/marketing string, not a real
+    product name — so it's dropped instead of shown as a deal label."""
+    t = " ".join((t or "").split())
+    if len(t) < 6:
+        return True
+    if _JUNK_TITLE_RE.match(t):
+        return True
+    if sum(c.isalpha() for c in t) < 5:  # mostly digits/symbols
+        return True
+    return False
+
+
+def _best_title(texts: list[str], min_len: int = 12) -> str | None:
+    """Pick the most product-name-like text from a card: the longest candidate that
+    isn't a price, a discount, or a junk badge."""
+    cands = [t for t in texts
+             if not t.startswith("₹") and "% off" not in t.lower()
+             and len(t) >= min_len and not is_junk_title(t)]
+    return max(cands, key=len) if cands else None
+
+
 def _price_to_int(s: str | None) -> int | None:
     if not s:
         return None
@@ -234,7 +267,7 @@ async def scrape_amazon(max_per_category: int = 3, categories: list[dict] | None
                     img_el = await card.query_selector(".s-image")
                     img = await img_el.get_attribute("src") if img_el else None
                     pct = _discount_pct(cur, orig, None)
-                    if not (title and pct):
+                    if not (title and pct) or is_junk_title(title):
                         continue
                     product_url = f"https://www.amazon.in/dp/{asin}"
                     deals.append({
@@ -310,8 +343,7 @@ async def scrape_flipkart(max_per_category: int = 3, categories: list[dict] | No
                     continue
                 prices = [t for t in texts if re.match(r"^₹[\d,]+$", t)]
                 disc = next((t for t in texts if re.search(r"\d+%\s*off", t, re.I)), None)
-                title = next((t for t in texts if len(t) > 12 and not t.startswith("₹")
-                              and "% off" not in t.lower()), None)
+                title = _best_title(texts, min_len=12)
                 pct = None
                 if disc:
                     m = re.search(r"(\d+)%", disc)
@@ -400,8 +432,7 @@ async def scrape_ajio(max_per_category: int = 3, categories: list[dict] | None =
                     continue
                 prices = [t for t in texts if re.match(r"^₹[\d,]+$", t)]
                 disc = next((t for t in texts if re.search(r"\d+%\s*off", t, re.I)), None)
-                title = next((t for t in texts if len(t) > 8 and not t.startswith("₹")
-                              and "% off" not in t.lower()), None)
+                title = _best_title(texts, min_len=8)
                 pct = None
                 if disc:
                     m = re.search(r"(\d+)%", disc)
