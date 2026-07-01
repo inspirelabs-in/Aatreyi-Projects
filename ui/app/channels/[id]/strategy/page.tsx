@@ -58,6 +58,19 @@ export default function StrategyPage() {
         )}
       </Collapsible>
 
+      {(data.auto_applied || []).length > 0 && (
+        <Collapsible title="🤖 Automatically implemented by the agent">
+          <p className="mb-2 text-xs text-slate-500">You don't need to do anything — the agent applies and executes all of this:</p>
+          <ul className="space-y-1.5">
+            {(data.auto_applied || []).map((a, i) => (
+              <li key={i} className="flex gap-2 text-sm text-slate-700">
+                <span className="text-green-600">✓</span><span>{a}</span>
+              </li>
+            ))}
+          </ul>
+        </Collapsible>
+      )}
+
       <div className="grid gap-4 md:grid-cols-2">
         <Collapsible title="Content mix">
           <div className="space-y-2">

@@ -902,11 +902,11 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
         # button at publish time). No homepage fallback — a CTA is only a link when
         # there's a real page to send the reader to.
         out["link_url"] = external_url
-        # Strip any URL the model invented in the body — only the REAL link may stay.
-        out["post_text"] = _sanitize_urls(out.get("post_text"), external_url)
-        # link-format posts also carry the URL inline in the body for visibility.
-        if fmt == "link" and external_url and external_url not in (out["post_text"] or ""):
-            out["post_text"] = f"{out['post_text']}\n\n{external_url}"
+        # ONE link per post: the affiliate URL is carried ONLY by the clickable
+        # button (link_url). Strip every URL from the body so the post never shows
+        # two links (button + inline). (Loot posts are built elsewhere and keep
+        # their inline links intentionally.)
+        out["post_text"] = _sanitize_urls(out.get("post_text"), None)
         # Safety net: with no link, strip any link-promising CTA the model still wrote.
         if not out["link_url"]:
             out["cta"] = _strip_linky_cta(out.get("cta"))
@@ -978,21 +978,20 @@ async def add_to_review_queue(
 
 
 async def maybe_auto_publish(channel_id: str | uuid.UUID, generated_post_id: str) -> dict[str, Any]:
-    """If the channel has auto_approve enabled, approve and publish immediately."""
+    """If the channel has auto_approve enabled, APPROVE the post so the scheduled
+    publisher (``publish_due_posts``) sends it at its slot time.
+
+    We intentionally do NOT publish here: content is generated ~15-20 min BEFORE
+    the slot (JIT), and the post must go out AT the slot time, not at generation
+    time. Approving marks it ready; the publisher picks it up when scheduled_at
+    is due."""
     cid = uuid.UUID(str(channel_id))
     async with AsyncSessionLocal() as session:
         channel = (await session.execute(select(Channel).where(Channel.id == cid))).scalar_one_or_none()
         if not channel or not channel.auto_approve:
             return {"auto_published": False, "reason": "auto_approve_disabled"}
-        username = channel.telegram_username
     await update_review_status(generated_post_id, "approved")
-    pub = await publish_generated_post(generated_post_id, username)
-    return {
-        "auto_published": bool(pub.get("published")),
-        "published": pub.get("published"),
-        "error": pub.get("error"),
-        "telegram_message_id": pub.get("telegram_message_id"),
-    }
+    return {"auto_published": True, "approved": True, "scheduled": True}
 
 
 def _pick_recycle_item(task: dict, candidates: list[dict]) -> dict | None:
@@ -1092,6 +1091,7 @@ async def publish_post(
     link_url: str | None = None,
     cta: str | None = None,
     hashtags: list[str] | None = None,
+    parse_mode: str | None = None,
 ) -> dict[str, Any]:
     """Publish a post via the Bot API, dispatching by format.
 
@@ -1119,11 +1119,11 @@ async def publish_post(
         if post_format == "poll" and poll_options and len(poll_options) >= 2:
             msg = await bot.send_poll(chat_id=chat, question=(post_text or "")[:300], options=poll_options[:10])
         elif post_format == "photo" and media_url:
-            msg = await bot.send_photo(chat_id=chat, photo=media_url, caption=body[:1024], reply_markup=button)
+            msg = await bot.send_photo(chat_id=chat, photo=media_url, caption=body[:1024], reply_markup=button, parse_mode=parse_mode)
         elif post_format == "video" and media_url:
-            msg = await bot.send_video(chat_id=chat, video=media_url, caption=body[:1024], reply_markup=button)
+            msg = await bot.send_video(chat_id=chat, video=media_url, caption=body[:1024], reply_markup=button, parse_mode=parse_mode)
         else:  # text, link, or media-less fallback
-            msg = await bot.send_message(chat_id=chat, text=body, reply_markup=button)
+            msg = await bot.send_message(chat_id=chat, text=body, reply_markup=button, parse_mode=parse_mode, disable_web_page_preview=True)
     except Exception as exc:  # noqa: BLE001 — surface as error dict, never 500
         # Most common cause: the bot isn't an admin of the channel yet.
         return {"published": False, "error": f"{type(exc).__name__}: {exc}"}

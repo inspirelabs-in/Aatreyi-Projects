@@ -84,14 +84,33 @@ class Settings(BaseSettings):
     # Full Flipkart affiliate query string appended after the product path
     # (replaces the product's own ?pid=...&lid=... query). affid + tracking params.
     FLIPKART_AFFILIATE_PARAMS: str = Field(default="affid=bh7162&affExtParam1=1005&affExtParam2=gb")
+    # Ajio affiliate query string appended after the product path (set later once
+    # the Ajio affiliate program/network is decided). Empty = post the raw Ajio
+    # product link (still clickable, just untracked).
+    AJIO_AFFILIATE_PARAMS: str | None = None
     # Discount policy: prefer >= PREFERRED%, fall back no lower than MIN%.
     DEAL_PREFERRED_DISCOUNT: int = Field(default=80)
     DEAL_MIN_DISCOUNT: int = Field(default=65)
     # Platforms to scrape and how many deals per category to keep.
+    # Ajio is wired (scrape_ajio + ajio_kw) but Akamai-blocked, so it's OFF by
+    # default — add "Ajio" here once an affiliate feed / anti-bot fetch is set up.
     DEAL_PLATFORMS: str = Field(default="Amazon,Flipkart")
     DEAL_MAX_PER_CATEGORY: int = Field(default=3)
     # Hour (local/IST, 0-23) for the dedicated daily deals refresh job.
     DEAL_REFRESH_HOUR: int = Field(default=8)
+
+    # ── GrabOn auto-poster (dense deal posting to the GrabOn channel) ─────────
+    # Posts loot-deal compilations + single-product deals all day, auto-published.
+    GRABON_CHANNEL_USERNAME: str = Field(default="GrabOnIndiaOfficial")
+    GRABON_LOOT_PER_DAY: int = Field(default=25)        # multi-link grouped posts
+    GRABON_SINGLE_PER_DAY: int = Field(default=25)      # single-product posts
+    GRABON_SINGLE_AMAZON: int = Field(default=15)       # of the singles, from Amazon
+    GRABON_SINGLE_FLIPKART: int = Field(default=10)     # of the singles, from Flipkart
+    GRABON_POST_START_HOUR: int = Field(default=9)      # 9 AM (local/IST)
+    GRABON_POST_END_HOUR: int = Field(default=23)       # last hour to post (23 => up to 11:59 PM)
+    GRABON_POST_INTERVAL_MIN: int = Field(default=18)   # ~50 posts across 9AM-12AM
+    GRABON_LOOT_BUCKETS: int = Field(default=4)         # category headings per loot post
+    GRABON_LOOT_PER_BUCKET: int = Field(default=3)      # links per heading
     # No-repeat window: a deal/article URL — and, for deals, the same product
     # (by title) — won't be reposted on a channel within this many days.
     DEDUP_WINDOW_DAYS: int = Field(default=30)
@@ -107,6 +126,11 @@ class Settings(BaseSettings):
     DAILY_CYCLE_HOUR: int = Field(default=7)
     # How often the content dispatcher checks for due post slots (minutes).
     CONTENT_DISPATCH_INTERVAL_MIN: int = Field(default=5)
+    # JIT generation lead: scrape/generate a slot's post this many minutes BEFORE
+    # its scheduled time (so content is fresh), then publish AT the slot time.
+    CONTENT_GENERATION_LEAD_MIN: int = Field(default=20)
+    # How often the publisher checks for approved posts whose slot time is due.
+    PUBLISH_INTERVAL_MIN: int = Field(default=3)
     # How often to sample subscriber counts (minutes) — near-real-time growth.
     SUBSCRIBER_POLL_INTERVAL_MIN: int = Field(default=10)
 
@@ -124,6 +148,7 @@ class Settings(BaseSettings):
         "PHONE_NUMBER",
         "TELEGRAM_PROXY",
         "SCRAPER_PROXY",
+        "AJIO_AFFILIATE_PARAMS",
         "BOT_TOKEN",
         "ADMIN_TELEGRAM_ID",
         "ANTHROPIC_API_KEY",

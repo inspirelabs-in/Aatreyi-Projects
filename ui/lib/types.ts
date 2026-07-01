@@ -82,6 +82,7 @@ export interface Strategy {
   primary_topics: string[] | null;
   growth_tactics: { tactic: string; detail: string; why?: string; action?: string; severity?: string }[] | null;
   diagnosis?: string | null;
+  auto_applied?: string[] | null;
   benchmark?: { competitor_avg_er: number | null; my_avg_er: number | null; target_er: number | null } | null;
   fatigue?: { score: number; flags: string[] } | null;
   competitor_insights?: { username: string; competitor_type?: string | null; topic_similarity: number; content_similarity: number; avg_er: number | null; post_frequency_per_day?: number | null; top_themes: string[]; best_format?: string | null; best_time?: string | null; strengths?: string[]; recommendation: string }[] | null;

@@ -24,9 +24,12 @@ from config import settings
 LOCAL_TZ = ZoneInfo(settings.SCHEDULER_TIMEZONE)
 
 from scheduler.jobs import (
+    dispatch_due_content,
     poll_subscribers,
+    publish_due_posts,
     run_daily_cycle,
     run_daily_deals,
+    run_grabon_deals,
     run_monthly_audit,
     run_weekly_cycle,
 )
@@ -65,13 +68,29 @@ def build_scheduler() -> AsyncIOScheduler:
     # Dedicated daily refresh for deals-aggregator channels with TODAY's deals.
     deals_hour = settings.DEAL_REFRESH_HOUR % 24
     scheduler.add_job(run_daily_deals, CronTrigger(hour=deals_hour, minute=0, timezone=LOCAL_TZ), id="daily_deals")
-    # NOTE: the per-slot content dispatcher is intentionally NOT registered —
-    # content is generated in-flow right after each strategy build (onboarding +
-    # daily/weekly cycles), so the Content Factory fills the moment a plan exists.
+    # Per-slot JIT pipeline: generate each slot's post ~15-20 min before its time,
+    # then publish exactly at the slot time (no more generating a whole day at once).
+    scheduler.add_job(
+        dispatch_due_content,
+        IntervalTrigger(minutes=settings.CONTENT_DISPATCH_INTERVAL_MIN),
+        id="content_dispatch",
+    )
+    scheduler.add_job(
+        publish_due_posts,
+        IntervalTrigger(minutes=settings.PUBLISH_INTERVAL_MIN),
+        id="publish_due",
+    )
     scheduler.add_job(
         poll_subscribers,
         IntervalTrigger(minutes=settings.SUBSCRIBER_POLL_INTERVAL_MIN),
         id="subscriber_poll",
+    )
+    # GrabOn dense deal auto-poster: fires every N min; the job itself gates to
+    # 9 AM–12 AM and the daily quota (25 loot + 25 single, 15 Amazon/10 Flipkart).
+    scheduler.add_job(
+        run_grabon_deals,
+        IntervalTrigger(minutes=settings.GRABON_POST_INTERVAL_MIN),
+        id="grabon_deals",
     )
     return scheduler
 

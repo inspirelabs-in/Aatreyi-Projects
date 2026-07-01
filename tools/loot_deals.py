@@ -1,0 +1,156 @@
+"""GrabOn auto-poster composers: loot-deal compilations + single-product deals.
+
+A LOOT post groups several scraped deals under broad category headings, each line
+a clickable affiliate link (HTML), e.g.:
+
+    🔥🔥 Afternoon Loot Deals 🔥🔥
+
+    ⚡ ELECTRONICS
+    • boAt Airdopes 141 (90% OFF)
+    • Noise Smartwatch (75% OFF)
+
+    👕 FASHION
+    • Levis Men Jeans (60% OFF)
+
+A SINGLE post is one product (photo + affiliate button). Both use the affiliate
+URLs already built by the scrapers (Amazon tag / Flipkart affid). Pure/formatting
+only — scraping, publishing and scheduling live elsewhere.
+"""
+from __future__ import annotations
+
+import html as _html
+from datetime import datetime
+from typing import Any
+
+from config import settings
+from tools.content import _title_fingerprint, is_title_dupe
+
+# Broad headings (ordered) -> the scrape categories that fall under them.
+LOOT_BUCKETS: list[tuple[str, set[str]]] = [
+    ("⚡ ELECTRONICS",      {"Electronics", "Mobiles", "Headphones", "Appliances"}),
+    ("👕 FASHION",          {"Fashion Men", "Fashion Women", "Ethnic Wear", "Sunglasses"}),
+    ("👟 FOOTWEAR & BAGS",  {"Footwear", "Handbags", "Bags & Luggage"}),
+    ("⌚ ACCESSORIES",      {"Watches", "Jewellery"}),
+    ("💄 BEAUTY",           {"Beauty", "Makeup", "Perfumes"}),
+    ("🏠 HOME & KITCHEN",   {"Home & Kitchen", "Home Decor", "Grocery"}),
+    ("🧸 TOYS & SPORTS",    {"Toys & Kids", "Sports"}),
+]
+
+
+def greeting(now: datetime) -> str:
+    h = now.hour
+    if 5 <= h < 12:
+        return "Morning"
+    if 12 <= h < 17:
+        return "Afternoon"
+    if 17 <= h < 21:
+        return "Evening"
+    return "Night"
+
+
+def _interleave(a: list, b: list) -> list:
+    """Evenly merge two lists by fractional position (e.g. 15 Amazon + 10 Flipkart
+    -> spread, not clustered)."""
+    seq: list[tuple[float, Any]] = []
+    for i, x in enumerate(a):
+        seq.append(((i + 0.5) / max(len(a), 1), x))
+    for i, x in enumerate(b):
+        seq.append(((i + 0.5) / max(len(b), 1), x))
+    seq.sort(key=lambda t: t[0])
+    return [x for _, x in seq]
+
+
+def daily_plan() -> list[tuple[str, str | None]]:
+    """The day's post schedule: GRABON_LOOT_PER_DAY loot + GRABON_SINGLE_PER_DAY
+    single posts, interleaved; singles split Amazon/Flipkart per config."""
+    n_loot = settings.GRABON_LOOT_PER_DAY
+    singles = _interleave(["Amazon"] * settings.GRABON_SINGLE_AMAZON,
+                          ["Flipkart"] * settings.GRABON_SINGLE_FLIPKART)
+    plan: list[tuple[str, str | None]] = []
+    si = 0
+    total = n_loot + len(singles)
+    for i in range(total):
+        # alternate loot / single; once one runs out, emit the other
+        want_loot = (i % 2 == 0)
+        loot_left = sum(1 for t, _ in plan if t == "loot") < n_loot
+        single_left = si < len(singles)
+        if (want_loot and loot_left) or not single_left:
+            if loot_left:
+                plan.append(("loot", None))
+            elif single_left:
+                plan.append(("single", singles[si])); si += 1
+        else:
+            plan.append(("single", singles[si])); si += 1
+    return plan
+
+
+def _label(deal: dict, max_len: int = 52) -> str:
+    """Short, human label for a loot line: trimmed title + discount."""
+    title = " ".join((deal.get("title") or "").split())
+    pct = deal.get("discount_pct")
+    base = title[:max_len].rstrip(" -–|")
+    return f"{base} ({pct}% OFF)" if pct else base
+
+
+def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
+    """Compose a loot post from the deal pool, grouped by bucket, skipping products
+    already posted recently (``seen`` fingerprints). Returns
+    {post_text(HTML), used} or None if too few fresh deals."""
+    now = datetime.now()
+    used_fps = list(seen)
+    sections: list[str] = []
+    used: list[dict] = []
+    for heading, cats in LOOT_BUCKETS:
+        if len(sections) >= settings.GRABON_LOOT_BUCKETS:
+            break
+        lines: list[str] = []
+        for d in deals:
+            if len(lines) >= settings.GRABON_LOOT_PER_BUCKET:
+                break
+            if (d.get("category") not in cats):
+                continue
+            url = (d.get("affiliate_url") or d.get("product_url") or "").strip()
+            if not url:
+                continue
+            if is_title_dupe(d.get("title"), used_fps):
+                continue
+            lines.append(f'• <a href="{_html.escape(url, quote=True)}">{_html.escape(_label(d))}</a>')
+            used.append(d)
+            used_fps.append(_title_fingerprint(d.get("title")))
+        if lines:
+            sections.append(f"<b>{heading}</b>\n" + "\n".join(lines))
+    # Need a reasonable post (at least 2 sections / several links) to be worth it.
+    if len(sections) < 2 or len(used) < 4:
+        return None
+    text = f"🔥🔥 {greeting(now)} Loot Deals 🔥🔥\n\n" + "\n\n".join(sections)
+    text += "\n\n🛍️ Tap any item to grab the deal!"
+    return {"post_text": text, "post_format": "text", "parse_mode": "HTML", "used": used}
+
+
+def build_single_deal_post(deals: list[dict], platform: str, seen: list[frozenset]) -> dict | None:
+    """Pick the best fresh single-product deal for ``platform`` and compose a
+    photo post with an affiliate button. None if no fresh deal."""
+    cands = [d for d in deals
+             if (d.get("platform") == platform)
+             and (d.get("affiliate_url") or d.get("product_url"))
+             and not is_title_dupe(d.get("title"), seen)]
+    if not cands:
+        return None
+    cands.sort(key=lambda d: d.get("discount_pct") or 0, reverse=True)
+    d = cands[0]
+    title = " ".join((d.get("title") or "").split())
+    pct = d.get("discount_pct")
+    cur = d.get("current_price")
+    orig = d.get("original_price")
+    price_bit = f"{cur}" + (f" (was {orig})" if orig else "")
+    head = f"🔥 {title}"
+    body = f"{head}\n\n💸 {price_bit}" + (f"  •  {pct}% OFF" if pct else "")
+    url = (d.get("affiliate_url") or d.get("product_url") or "").strip()
+    return {
+        "post_text": body,
+        "post_format": "photo" if d.get("image_url") else "text",
+        "media_url": d.get("image_url"),
+        "link_url": url,
+        "cta": "🛒 Grab Deal",
+        "used": [d],
+    }

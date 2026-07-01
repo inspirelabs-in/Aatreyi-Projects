@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 
+from config import settings
 from agents.analytics import AnalyticsAgent
 from agents.channel_dna import ChannelDNAAgent
 from agents.competitor_intelligence import CompetitorIntelligenceAgent
@@ -101,8 +102,10 @@ async def _run_full_cycle_for(cid, uname, tier, client, cadence: str) -> None:
         # Lean path — brand-new Tier-A channel: discover competitors, then plan.
         await _safe(CompetitorIntelligenceAgent(trig).run(cid, client=client), f"competitor/{uname}")
         await _safe(StrategyAgent(snapshot_type).run(cid), f"strategy/{uname}")
-    # Content is generated in-flow right after the plan (no per-slot dispatcher).
-    await _safe(generate_content_for_strategy(cid, client), f"content/{uname}")
+    # Content is NOT generated here anymore — the per-slot JIT dispatcher
+    # (dispatch_due_content) generates each post ~15-20 min before its slot time,
+    # then publish_due_posts publishes it AT the slot time. This builds the dated
+    # plan now; posts fill in on schedule.
 
 
 async def run_weekly_cycle() -> dict:
@@ -148,8 +151,8 @@ async def run_daily_cycle() -> dict:
             if ch.get("needs_strategy_review"):
                 await _safe(StrategyAgent("daily", trigger="manual").run(cid), f"strategy/review/{uname}")
                 await clear_strategy_review_flag(cid)
-            # Generate the day's planned content in-flow (no per-slot dispatcher).
-            await _safe(generate_content_for_strategy(cid, client), f"content/daily/{uname}")
+            # Content is generated per-slot (JIT) by dispatch_due_content ~15-20 min
+            # before each slot and published at the slot time — not bulk-generated here.
     return {"channels": len(channels)}
 
 
@@ -166,9 +169,121 @@ async def run_daily_deals() -> dict:
     async with telethon_session() as client:
         for ch in deals_channels:
             cid, uname = ch["id"], ch["telegram_username"]
+            # The GrabOn channel is driven by the dedicated dense auto-poster
+            # (run_grabon_deals); skip the strategy-slot content path for it so it
+            # isn't posted twice.
+            if (uname or "").lstrip("@").lower() == settings.GRABON_CHANNEL_USERNAME.lstrip("@").lower():
+                continue
+            # Refresh the daily plan; content is generated per-slot (JIT) by
+            # dispatch_due_content and published at each slot's time.
             await _safe(StrategyAgent("daily").run(cid), f"deals_strategy/{uname}")
-            await _safe(generate_content_for_strategy(cid, client), f"deals_content/{uname}")
     return {"deals_channels": len(deals_channels)}
+
+
+# ── GrabOn dense auto-poster (loot + single deals, 9 AM–12 AM, auto-publish) ──
+async def _grabon_posts_today(channel_id) -> int:
+    """How many deal posts the GrabOn auto-poster has published today (local)."""
+    import uuid
+    from datetime import datetime
+    from sqlalchemy import select, func
+    from db.base import AsyncSessionLocal
+    from db.models import PostQueue, QueueStatus
+    from tools.strategy import LOCAL_TZ
+    start = datetime.now(LOCAL_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    cid = uuid.UUID(str(channel_id))
+    async with AsyncSessionLocal() as s:
+        return (await s.execute(
+            select(func.count(PostQueue.id)).where(
+                PostQueue.channel_id == cid,
+                PostQueue.status == QueueStatus.sent,
+                PostQueue.published_at >= start,
+            )
+        )).scalar() or 0
+
+
+async def _record_grabon_post(channel_id, post: dict, used: list[dict], tg_msg_id) -> None:
+    """Persist a published GrabOn post (for the daily counter) + its deals as
+    ContentItems so the title/url de-dup blocks repeats."""
+    import uuid
+    from datetime import datetime, timezone
+    from db.base import AsyncSessionLocal
+    from db.models import (GeneratedPost, PostQueue, ReviewStatus, QueueStatus,
+                           ContentItem, ContentItemStatus)
+    cid = uuid.UUID(str(channel_id))
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as s:
+        gp = GeneratedPost(
+            channel_id=cid, post_text=post.get("post_text"),
+            post_format=post.get("post_format", "text"), media_url=post.get("media_url"),
+            link_url=post.get("link_url"), cta=post.get("cta"),
+            review_status=ReviewStatus.approved,
+        )
+        s.add(gp)
+        await s.flush()
+        s.add(PostQueue(
+            channel_id=cid, generated_post_id=gp.id, scheduled_at=now, published_at=now,
+            status=QueueStatus.sent, telegram_message_id=tg_msg_id,
+        ))
+        for d in used or []:
+            s.add(ContentItem(
+                channel_id=cid,
+                external_url=(d.get("affiliate_url") or d.get("product_url")),
+                title=d.get("title"), format_tag="deal", status=ContentItemStatus.used,
+            ))
+        await s.commit()
+
+
+async def run_grabon_deals() -> dict:
+    """Post one GrabOn deal (loot compilation or single product) per fire, all day.
+
+    Fires on an interval; only acts 9 AM–12 AM (local) and stops once the daily
+    quota (loot + single, Amazon/Flipkart split) is met. Auto-publishes via the
+    bot. De-dups products against what was already posted in the window."""
+    from datetime import datetime
+    from config import settings
+    from tools.strategy import LOCAL_TZ
+    from tools.loot_deals import daily_plan, build_loot_post, build_single_deal_post
+    from tools.content import recent_title_fingerprints, publish_post
+    from tools.deal_scrapers import get_fresh_deals
+
+    now = datetime.now(LOCAL_TZ)
+    if not (settings.GRABON_POST_START_HOUR <= now.hour <= settings.GRABON_POST_END_HOUR):
+        return {"skipped": "outside posting hours", "hour": now.hour}
+
+    uname = settings.GRABON_CHANNEL_USERNAME
+    channels = await list_channels()
+    ch = next((c for c in channels
+               if (c.get("telegram_username") or "").lstrip("@").lower() == uname.lstrip("@").lower()), None)
+    if not ch:
+        return {"skipped": "grabon channel not found", "looking_for": uname}
+    cid = ch["id"]
+
+    plan = daily_plan()
+    idx = await _grabon_posts_today(cid)
+    if idx >= len(plan):
+        return {"done": True, "posted_today": idx}
+    typ, platform = plan[idx]
+
+    deals = await get_fresh_deals()  # 30-min cached, so dense fires reuse one scrape
+    if not deals:
+        return {"skipped": "no deals scraped", "idx": idx}
+    seen = await recent_title_fingerprints(cid)
+    post = (build_loot_post(deals, seen) if typ == "loot"
+            else build_single_deal_post(deals, platform, seen))
+    if not post:
+        return {"skipped": f"no fresh {typ} deal", "idx": idx, "platform": platform}
+
+    res = await publish_post(
+        uname, post["post_text"], post.get("post_format", "text"),
+        media_url=post.get("media_url"), link_url=post.get("link_url"),
+        cta=post.get("cta"), parse_mode=post.get("parse_mode"),
+    )
+    if not res.get("published"):
+        log.warning("grabon deal publish failed (%s): %s", typ, res.get("error"))
+        return {"skipped": "publish failed", "error": res.get("error"), "idx": idx}
+    await _record_grabon_post(cid, post, post.get("used") or [], res.get("telegram_message_id"))
+    log.info("grabon %s deal posted %d/%d (platform=%s)", typ, idx + 1, len(plan), platform)
+    return {"posted": typ, "platform": platform, "n": idx + 1, "total": len(plan)}
 
 
 # ── Onboarding orchestrator (tier-aware initial run) ─────────────────────────
@@ -199,11 +314,10 @@ async def onboard_channel_pipeline(channel_id: str) -> dict:
         # Pass posts so source seeder can detect the channel's primary website
         # (e.g. grbn.in links → grabon.in) instead of using a generic category default.
         await _safe(seed_default_sources(channel_id, ctx.get("category"), posts=channel_posts, bio_text=channel_info.get("description")), f"sources/{uname}")
-        # Generate content for the whole plan up front (demo flow) so the Content
-        # Factory is populated immediately — the scheduler no longer dispatches
-        # content per-slot. Every planned slot (incl. retention triggers) ships a
-        # real post in its strategy-given format.
-        generated = await _safe(generate_content_for_strategy(channel_id, client), f"content/{uname}")
+        # Seed just the next couple of due slots so the channel isn't empty right
+        # after onboarding; the rest are generated per-slot (JIT) ~15-20 min before
+        # their time and published at the slot time. NOT a full-day bulk generate.
+        generated = await _safe(generate_content_for_strategy(channel_id, client, limit=2), f"content/{uname}")
     await update_channel_meta(channel_id, status=ChannelStatus.active)
     return {"tier": tier, "pipeline": "full",
             "content_generated": (generated or {}).get("generated", 0)}
@@ -288,7 +402,47 @@ async def _dispatch(due: list[dict], client) -> dict:
             ContentIntelligenceAgent().run(task["channel_id"], task_id=task["id"], client=client),
             f"content/{task['id']}",
         )
-        if res:
-            await mark_task_generated(task["id"], res.get("generated_post_id"))
+        if res and res.get("generated_post_id"):
+            await mark_task_generated(task["id"], res["generated_post_id"])
             n += 1
     return {"dispatched": n}
+
+
+async def dispatch_due_content() -> dict:
+    """JIT generation: generate content for slots whose time is within the lead
+    window (~15-20 min out). Registered on an interval so posts are prepared just
+    before their slot — never all at once."""
+    return await dispatch_content_slots(lead_minutes=settings.CONTENT_GENERATION_LEAD_MIN)
+
+
+async def publish_due_posts() -> dict:
+    """Publish approved posts whose slot time has arrived (scheduled_at <= now).
+
+    Generation happens ~15-20 min earlier (dispatch_due_content); this makes the
+    post go out AT its planned time. Manual-review channels are unaffected (their
+    posts are only approved when the operator approves)."""
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+    from db.base import AsyncSessionLocal
+    from db.models import GeneratedPost, PostQueue, QueueStatus, ReviewStatus, Channel
+    from tools.content import publish_generated_post
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(
+            select(PostQueue.generated_post_id, Channel.telegram_username)
+            .join(GeneratedPost, PostQueue.generated_post_id == GeneratedPost.id)
+            .join(Channel, GeneratedPost.channel_id == Channel.id)
+            .where(PostQueue.status == QueueStatus.queued,
+                   GeneratedPost.review_status == ReviewStatus.approved,
+                   PostQueue.scheduled_at <= now)
+            .order_by(PostQueue.scheduled_at.asc())
+            .limit(25)
+        )).all()
+    n = 0
+    for gp_id, uname in rows:
+        res = await _safe(publish_generated_post(str(gp_id), uname), f"publish/{gp_id}")
+        if res and res.get("published"):
+            n += 1
+    if n:
+        log.info("published %d due post(s)", n)
+    return {"published": n}

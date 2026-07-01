@@ -540,11 +540,26 @@ def compute_strategy(
     fatigue = fatigue_score(tasks)
 
     if is_deals:
+        _end = (settings.GRABON_POST_END_HOUR + 1) % 24 or 24
+        _total = settings.GRABON_LOOT_PER_DAY + settings.GRABON_SINGLE_PER_DAY
         goal = (
-            f"Drive clicks & conversions: post {slots_per_day} fresh high-discount deal(s)/day "
-            f"as product photos with affiliate links, spread across categories "
-            f"({', '.join(primary_topics[:3])}). Lead with the biggest savings."
+            f"Auto-post {_total} deals/day, {settings.GRABON_POST_START_HOUR}:00–{_end}:00: "
+            f"{settings.GRABON_LOOT_PER_DAY} loot compilations (multi-link, grouped by category, "
+            f"link-only) + {settings.GRABON_SINGLE_PER_DAY} single-product posts (photo) — split "
+            f"{settings.GRABON_SINGLE_AMAZON} Amazon / {settings.GRABON_SINGLE_FLIPKART} Flipkart, "
+            f"affiliate-tagged. Categories led by audience engagement "
+            f"({', '.join(primary_topics[:3])})."
         )
+        auto_applied = [
+            f"Schedule: {_total} posts spread {settings.GRABON_POST_START_HOUR}:00–{_end}:00 "
+            f"({settings.GRABON_LOOT_PER_DAY} loot + {settings.GRABON_SINGLE_PER_DAY} single).",
+            "Formats applied: loot → link compilation; single product → photo.",
+            f"Platform split applied: {settings.GRABON_SINGLE_AMAZON} Amazon / "
+            f"{settings.GRABON_SINGLE_FLIPKART} Flipkart singles.",
+            "Categories chosen by audience engagement (competitor + own high-ER posts).",
+            "Each post scraped fresh ~15-20 min before its slot and auto-published at the slot time.",
+            "Duplicate products blocked (by title + link) within the no-repeat window.",
+        ]
     else:
         goal = (
             f"Grow {dna.get('category') or 'channel'}: {slots_per_day} post(s)/day, "
@@ -552,6 +567,14 @@ def compute_strategy(
         )
         if bench_er is not None and avg_er is not None and bench_er > avg_er:
             goal += f". Close ER gap to competitor avg {bench_er}% (current {avg_er}%)"
+        _peak = ", ".join(f"{t.get('scheduled_time','')[:5]}" for t in tasks[:slots_per_day]) if tasks else ""
+        auto_applied = [
+            f"Posting times set from your best-engagement hours{f' ({_peak})' if _peak else ''}.",
+            f"Focus topics chosen by engagement: {', '.join(primary_topics[:4])}.",
+            "Format mix applied automatically per what performs for this niche.",
+            "Each post generated ~15-20 min before its slot and auto-published at the slot time.",
+            "Duplicate/near-duplicate content blocked within the no-repeat window.",
+        ]
     diagnosis = build_diagnosis(avg_er, sub_delta, churn, bench_er, tactics)
     competitor_insights = _build_competitor_insights(competitors)
     # Channel-level competitor intelligence (facts only: gaps, trends, best
@@ -567,6 +590,7 @@ def compute_strategy(
     return {
         "goal": goal,
         "diagnosis": diagnosis,
+        "auto_applied": auto_applied,
         "post_frequency_per_day": freq,
         "content_mix": content_mix,
         "primary_topics": primary_topics,
@@ -663,6 +687,7 @@ async def save_strategy(channel_id: str | uuid.UUID, strategy_payload: dict) -> 
             growth_tactics=strategy_payload.get("growth_tactics"),
             analysis={
                 "diagnosis": strategy_payload.get("diagnosis"),
+                "auto_applied": strategy_payload.get("auto_applied"),
                 "benchmark": strategy_payload.get("benchmark"),
                 "fatigue": strategy_payload.get("fatigue"),
                 "competitor_insights": strategy_payload.get("competitor_insights"),

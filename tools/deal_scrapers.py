@@ -39,20 +39,20 @@ DEAL_CATEGORIES: list[dict[str, str]] = [
     {"category": "Electronics",    "amazon_kw": "electronics",        "amazon_i": "electronics", "flipkart_kw": "electronics"},
     {"category": "Mobiles",        "amazon_kw": "smartphones",        "amazon_i": "electronics", "flipkart_kw": "mobiles"},
     {"category": "Headphones",     "amazon_kw": "headphones earbuds", "amazon_i": "electronics", "flipkart_kw": "headphones"},
-    {"category": "Fashion Men",    "amazon_kw": "mens clothing",      "amazon_i": "apparel",     "flipkart_kw": "mens fashion"},
-    {"category": "Fashion Women",  "amazon_kw": "womens clothing",    "amazon_i": "apparel",     "flipkart_kw": "womens clothing"},
-    {"category": "Ethnic Wear",    "amazon_kw": "women kurta saree",  "amazon_i": "apparel",     "flipkart_kw": "kurtas ethnic wear"},
-    {"category": "Footwear",       "amazon_kw": "shoes",              "amazon_i": "shoes",       "flipkart_kw": "footwear"},
-    {"category": "Handbags",       "amazon_kw": "handbags women",     "amazon_i": "shoes",       "flipkart_kw": "handbags"},
-    {"category": "Bags & Luggage", "amazon_kw": "backpacks luggage",  "amazon_i": "luggage",     "flipkart_kw": "bags"},
-    {"category": "Watches",        "amazon_kw": "watches",            "amazon_i": "watches",     "flipkart_kw": "watches"},
-    {"category": "Sunglasses",     "amazon_kw": "sunglasses",         "amazon_i": "apparel",     "flipkart_kw": "sunglasses"},
-    {"category": "Jewellery",      "amazon_kw": "jewellery women",    "amazon_i": "apparel",     "flipkart_kw": "jewellery"},
-    {"category": "Beauty",         "amazon_kw": "beauty products",    "amazon_i": "beauty",      "flipkart_kw": "beauty"},
-    {"category": "Makeup",         "amazon_kw": "makeup cosmetics",   "amazon_i": "beauty",      "flipkart_kw": "makeup cosmetics"},
-    {"category": "Perfumes",       "amazon_kw": "perfume deodorant",  "amazon_i": "beauty",      "flipkart_kw": "perfumes"},
+    {"category": "Fashion Men",    "amazon_kw": "mens clothing",      "amazon_i": "apparel",     "flipkart_kw": "mens fashion",       "ajio_kw": "men"},
+    {"category": "Fashion Women",  "amazon_kw": "womens clothing",    "amazon_i": "apparel",     "flipkart_kw": "womens clothing",    "ajio_kw": "women"},
+    {"category": "Ethnic Wear",    "amazon_kw": "women kurta saree",  "amazon_i": "apparel",     "flipkart_kw": "kurtas ethnic wear", "ajio_kw": "ethnic wear"},
+    {"category": "Footwear",       "amazon_kw": "shoes",              "amazon_i": "shoes",       "flipkart_kw": "footwear",           "ajio_kw": "footwear"},
+    {"category": "Handbags",       "amazon_kw": "handbags women",     "amazon_i": "shoes",       "flipkart_kw": "handbags",           "ajio_kw": "handbags"},
+    {"category": "Bags & Luggage", "amazon_kw": "backpacks luggage",  "amazon_i": "luggage",     "flipkart_kw": "bags",               "ajio_kw": "bags backpacks"},
+    {"category": "Watches",        "amazon_kw": "watches",            "amazon_i": "watches",     "flipkart_kw": "watches",            "ajio_kw": "watches"},
+    {"category": "Sunglasses",     "amazon_kw": "sunglasses",         "amazon_i": "apparel",     "flipkart_kw": "sunglasses",         "ajio_kw": "sunglasses"},
+    {"category": "Jewellery",      "amazon_kw": "jewellery women",    "amazon_i": "apparel",     "flipkart_kw": "jewellery",          "ajio_kw": "jewellery"},
+    {"category": "Beauty",         "amazon_kw": "beauty products",    "amazon_i": "beauty",      "flipkart_kw": "beauty",             "ajio_kw": "beauty"},
+    {"category": "Makeup",         "amazon_kw": "makeup cosmetics",   "amazon_i": "beauty",      "flipkart_kw": "makeup cosmetics",   "ajio_kw": "makeup"},
+    {"category": "Perfumes",       "amazon_kw": "perfume deodorant",  "amazon_i": "beauty",      "flipkart_kw": "perfumes",           "ajio_kw": "perfume fragrance"},
     {"category": "Home & Kitchen", "amazon_kw": "home kitchen",       "amazon_i": "kitchen",     "flipkart_kw": "home kitchen"},
-    {"category": "Home Decor",     "amazon_kw": "home decor",         "amazon_i": "kitchen",     "flipkart_kw": "home decor"},
+    {"category": "Home Decor",     "amazon_kw": "home decor",         "amazon_i": "kitchen",     "flipkart_kw": "home decor",         "ajio_kw": "home decor"},
     {"category": "Appliances",     "amazon_kw": "home appliances",    "amazon_i": "appliances",  "flipkart_kw": "appliances"},
     {"category": "Sports",         "amazon_kw": "sports fitness",     "amazon_i": "sporting",    "flipkart_kw": "sports fitness"},
     {"category": "Toys & Kids",    "amazon_kw": "toys games kids",    "amazon_i": "toys",        "flipkart_kw": "toys kids"},
@@ -164,6 +164,15 @@ def build_affiliate_link(product_url: str, platform: str) -> str:
     if is_flipkart:
         base = product_url.split("?")[0].rstrip("/")  # remove everything from '?' on
         params = settings.FLIPKART_AFFILIATE_PARAMS
+        return f"{base}?{params}" if params else base
+
+    is_ajio = platform == "Ajio" or "ajio.com" in product_url
+    if is_ajio:
+        # Affiliate program TBD — for now return the real (clickable) product link.
+        # When the Ajio affiliate format is known, set AJIO_AFFILIATE_PARAMS and it
+        # will be appended just like Flipkart.
+        base = product_url.split("?")[0].rstrip("/")
+        params = getattr(settings, "AJIO_AFFILIATE_PARAMS", None)
         return f"{base}?{params}" if params else base
 
     return product_url
@@ -325,6 +334,96 @@ async def scrape_flipkart(max_per_category: int = 3, categories: list[dict] | No
     return deals
 
 
+# ── Ajio scraper (Playwright, class-name-agnostic, same DOM walk as Flipkart) ─
+async def scrape_ajio(max_per_category: int = 3, categories: list[dict] | None = None) -> list[dict[str, Any]]:
+    """Scrape Ajio (fashion/lifestyle) for discounted products. Only categories
+    that define an ``ajio_kw`` are scraped (Ajio doesn't sell electronics/grocery).
+    Ajio product URLs contain '/p/' too, so we reuse the price->card DOM walk."""
+    from playwright.async_api import async_playwright
+
+    cats = [c for c in (categories or DEAL_CATEGORIES) if c.get("ajio_kw")]
+    if not cats:
+        return []
+    deals: list[dict[str, Any]] = []
+    extract_js = r"""
+    () => {
+      const out = [];
+      const priceEls = [...document.querySelectorAll('*')].filter(el =>
+        el.children.length === 0 && /^₹[\d,]+$/.test((el.textContent||'').trim()));
+      for (const priceEl of priceEls) {
+        let c = priceEl;
+        for (let i = 0; i < 8 && c; i++) {
+          c = c.parentElement;
+          if (!c) break;
+          const link = c.querySelector('a[href*="/p/"]');
+          if (link) {
+            const texts = [...c.querySelectorAll('*')].filter(e=>e.children.length===0)
+              .map(e=>(e.textContent||'').trim()).filter(Boolean);
+            const img = c.querySelector('img');
+            out.push({href: link.getAttribute('href'), texts: texts,
+                      img: img ? (img.getAttribute('src')||'') : ''});
+            break;
+          }
+        }
+      }
+      return out;
+    }
+    """
+    async with async_playwright() as p:
+        _pl_proxy = _playwright_proxy()
+        _launch_kw = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
+        if _pl_proxy:
+            _launch_kw["proxy"] = _pl_proxy
+        browser = await p.chromium.launch(**_launch_kw)
+        ctx = await browser.new_context(user_agent=_UA, viewport={"width": 1366, "height": 900}, locale="en-IN")
+        page = await ctx.new_page()
+        for cat in cats:
+            kw = cat["ajio_kw"].replace(" ", "%20")
+            url = f"https://www.ajio.com/search/?text={kw}"
+            try:
+                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(1800)
+                # Ajio lazy-loads the grid — scroll to populate product cards.
+                for _ in range(3):
+                    await page.mouse.wheel(0, 2200)
+                    await page.wait_for_timeout(700)
+                raw = await page.evaluate(extract_js)
+            except Exception:
+                continue
+            taken = 0
+            seen: set[str] = set()
+            for r in raw or []:
+                if taken >= max_per_category:
+                    break
+                href, texts = r.get("href"), r.get("texts") or []
+                if not href or href in seen:
+                    continue
+                prices = [t for t in texts if re.match(r"^₹[\d,]+$", t)]
+                disc = next((t for t in texts if re.search(r"\d+%\s*off", t, re.I)), None)
+                title = next((t for t in texts if len(t) > 8 and not t.startswith("₹")
+                              and "% off" not in t.lower()), None)
+                pct = None
+                if disc:
+                    m = re.search(r"(\d+)%", disc)
+                    pct = int(m.group(1)) if m else None
+                cur = prices[0] if prices else None
+                orig = prices[1] if len(prices) > 1 else None
+                pct = _discount_pct(cur, orig, pct)
+                if not (title and pct):
+                    continue
+                seen.add(href)
+                product_url = "https://www.ajio.com" + href.split("?")[0]
+                deals.append({
+                    "platform": "Ajio", "category": cat["category"], "title": title[:140],
+                    "current_price": cur, "original_price": orig, "discount_pct": pct,
+                    "image_url": r.get("img") or None, "product_url": product_url,
+                    "affiliate_url": build_affiliate_link(product_url, "Ajio"),
+                })
+                taken += 1
+        await browser.close()
+    return deals
+
+
 # ── Orchestrator with the 80%/65% discount policy ────────────────────────────
 async def get_fresh_deals(
     platforms: list[str] | None = None,
@@ -334,7 +433,7 @@ async def get_fresh_deals(
     """Scrape today's deals, then apply the discount policy: prefer >=80%, else
     fall back down to >=65% (never below). Returns [] on total failure so the
     caller can fall back to grabon.in coupon pages."""
-    platforms = platforms or [s.strip() for s in (settings.DEAL_PLATFORMS or "Amazon,Flipkart").split(",") if s.strip()]
+    platforms = platforms or [s.strip() for s in (settings.DEAL_PLATFORMS or "Amazon,Flipkart,Ajio").split(",") if s.strip()]
     pref, floor = settings.DEAL_PREFERRED_DISCOUNT, settings.DEAL_MIN_DISCOUNT
 
     cache_key = f"{','.join(sorted(platforms))}|{max_per_category}|{pref}|{floor}"
@@ -348,6 +447,8 @@ async def get_fresh_deals(
         tasks.append(scrape_amazon(max_per_category, categories))
     if "Flipkart" in platforms:
         tasks.append(scrape_flipkart(max_per_category, categories))
+    if "Ajio" in platforms:
+        tasks.append(scrape_ajio(max_per_category, categories))
     for res in await asyncio.gather(*tasks, return_exceptions=True):
         if isinstance(res, list):
             raw.extend(res)
