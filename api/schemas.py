@@ -9,6 +9,21 @@ class OnboardChannel(BaseModel):
     category: str | None = None
     growth_goal: str | None = None
     language: str = "en"
+    # Platform Admin only: create the channel for another organization. Ignored
+    # for normal users (their channel is auto-assigned to their own org).
+    organization_id: str | None = None
+
+
+class ChannelUpdate(BaseModel):
+    display_name: str | None = None
+    category: str | None = None
+    # Moving a channel to another org is Platform-Admin-only (enforced in the router).
+    organization_id: str | None = None
+
+
+class OrgSettingsUpdate(BaseModel):
+    auto_approve_content: bool | None = None
+    daily_target_posts: int | None = Field(None, ge=1, le=200)
 
 
 class EditPost(BaseModel):
@@ -45,3 +60,14 @@ class ChannelSettingsUpdate(BaseModel):
 
 class CompetitorHandleUpdate(BaseModel):
     handle: str = Field(..., description="Telegram handle (with or without leading @)")
+
+
+class CreateOrganization(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128, examples=["My News Network"])
+    slug: str | None = Field(None, min_length=1, max_length=64, pattern=r"^[a-z0-9-]+$")
+
+
+class CreateUser(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128, examples=["Alice"])
+    email: str | None = Field(None, max_length=255, examples=["alice@example.com"])
+    is_admin: bool = False

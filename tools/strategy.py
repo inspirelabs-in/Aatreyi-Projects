@@ -642,6 +642,8 @@ def compute_strategy(
         "peak_hours": peak_hours or slot_hours,
         "peak_source": peak_source,
         "has_peak_data": has_peak_data,
+        # Organization-configured daily target (deals only). None → config defaults.
+        "daily_target": inputs.get("daily_target"),
     })
     is_dense = profile["planner"] == DENSE
 
@@ -1215,8 +1217,22 @@ async def load_strategy_inputs(channel_id: str | uuid.UUID) -> dict[str, Any]:
     community_state = (intelligence.get("community_signal") or {}).get("state")
     recycle_candidates = intelligence.get("recycle_candidates") or []
 
+    # Organization-configured daily target (deals only). None → current defaults.
+    daily_target = None
+    if channel is not None:
+        from db.models import OrganizationSettings
+        async with AsyncSessionLocal() as s2:
+            org_settings = (await s2.execute(
+                select(OrganizationSettings).where(
+                    OrganizationSettings.organization_id == channel.organization_id
+                )
+            )).scalar_one_or_none()
+            if org_settings is not None:
+                daily_target = org_settings.daily_target_posts
+
     return {
         "channel": {"category": channel.category, "username": channel.telegram_username} if channel else {},
+        "daily_target": daily_target,
         "dna": dna_dict(dna_row),
         "analytics_daily": snap_dict(daily),
         "analytics_weekly": snap_dict(weekly),

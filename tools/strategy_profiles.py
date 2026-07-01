@@ -49,13 +49,39 @@ def _media_mix_from_formats(content_mix: list[dict] | None) -> list[dict]:
     return [{"media": k, "pct": round(v)} for k, v in sorted(agg.items(), key=lambda kv: -kv[1])]
 
 
+def _scale_deal_counts(target: int) -> tuple[int, int, int, int]:
+    """Scale the configured loot/single and Amazon/Flipkart splits to hit `target`
+    posts/day while preserving the configured ratios. Returns
+    (loot, single, single_amazon, single_flipkart)."""
+    base_loot = settings.GRABON_LOOT_PER_DAY
+    base_single = settings.GRABON_SINGLE_PER_DAY
+    base_total = max(base_loot + base_single, 1)
+    target = max(int(target), 1)
+    loot = round(target * base_loot / base_total)
+    loot = max(0, min(loot, target))
+    single = target - loot
+    # Amazon/Flipkart split of the singles, preserving the configured ratio.
+    a, f = settings.GRABON_SINGLE_AMAZON, settings.GRABON_SINGLE_FLIPKART
+    ratio_total = max(a + f, 1)
+    amazon = round(single * a / ratio_total)
+    amazon = max(0, min(amazon, single))
+    flipkart = single - amazon
+    return loot, single, amazon, flipkart
+
+
 def _deals_profile(category: str | None, signals: dict) -> dict[str, Any]:
     """The deals-aggregator profile (GrabOn is an instance of this — NOT a special
     case). Dense JIT-scraped planner: loot compilations + single-product posts,
-    marketplace-split, spread across the posting window. All numbers come from
-    config so a different dense channel can override them without code changes."""
-    loot = settings.GRABON_LOOT_PER_DAY
-    single = settings.GRABON_SINGLE_PER_DAY
+    marketplace-split, spread across the posting window. Counts come from config by
+    default, or are scaled to the organization's configured daily target when set."""
+    target = signals.get("daily_target")
+    if target:
+        loot, single, single_amazon, single_flipkart = _scale_deal_counts(target)
+    else:
+        loot = settings.GRABON_LOOT_PER_DAY
+        single = settings.GRABON_SINGLE_PER_DAY
+        single_amazon = settings.GRABON_SINGLE_AMAZON
+        single_flipkart = settings.GRABON_SINGLE_FLIPKART
     total = max(loot + single, 1)
     start, end = settings.GRABON_POST_START_HOUR, settings.GRABON_POST_END_HOUR
     peak = sorted(signals.get("peak_hours") or [13, 20, 21])
@@ -85,8 +111,8 @@ def _deals_profile(category: str | None, signals: dict) -> dict[str, Any]:
                 "loot": loot,
                 "single": single,
                 "marketplace_split": {
-                    "Amazon": settings.GRABON_SINGLE_AMAZON,
-                    "Flipkart": settings.GRABON_SINGLE_FLIPKART,
+                    "Amazon": single_amazon,
+                    "Flipkart": single_flipkart,
                 },
             },
         },
@@ -96,8 +122,9 @@ def _deals_profile(category: str | None, signals: dict) -> dict[str, Any]:
             f"{total} posts/day across {start:02d}:00–{(end + 1) % 24 or 24:02d}:00. "
             f"{loot} loot compilations (many clickable links, no image) give breadth; "
             f"{single} single-product photo posts spotlight standout deals "
-            f"(split {settings.GRABON_SINGLE_AMAZON} Amazon / {settings.GRABON_SINGLE_FLIPKART} "
-            f"Flipkart). Every deal is scraped just-in-time so prices/stock are live."
+            f"(split {single_amazon} Amazon / {single_flipkart} Flipkart)"
+            + (" — scaled to your organization's daily target" if target else "")
+            + ". Every deal is scraped just-in-time so prices/stock are live."
         ),
     }
 

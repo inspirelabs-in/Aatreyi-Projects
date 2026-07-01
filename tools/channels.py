@@ -23,6 +23,15 @@ async def get_or_create_channel(username: str, **defaults: Any) -> dict[str, Any
             )
         ).scalar_one_or_none()
         if row is None:
+            # Every channel must belong to an organization; default to GrabOn when
+            # the caller didn't specify one (keeps internal/seed callers working).
+            if not defaults.get("organization_id"):
+                from db.models import Organization
+                org_id = (await session.execute(
+                    select(Organization.id).where(Organization.slug == "grabon")
+                )).scalar_one_or_none()
+                if org_id is not None:
+                    defaults["organization_id"] = org_id
             row = Channel(telegram_username=username, **defaults)
             session.add(row)
             await session.commit()

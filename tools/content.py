@@ -988,7 +988,19 @@ async def maybe_auto_publish(channel_id: str | uuid.UUID, generated_post_id: str
     cid = uuid.UUID(str(channel_id))
     async with AsyncSessionLocal() as session:
         channel = (await session.execute(select(Channel).where(Channel.id == cid))).scalar_one_or_none()
-        if not channel or not channel.auto_approve:
+        if not channel:
+            return {"auto_published": False, "reason": "auto_approve_disabled"}
+        # Organization-level setting is authoritative when present; fall back to the
+        # legacy per-channel flag so existing behavior is preserved.
+        from db.models import OrganizationSettings
+        org_settings = (await session.execute(
+            select(OrganizationSettings).where(
+                OrganizationSettings.organization_id == channel.organization_id
+            )
+        )).scalar_one_or_none()
+        effective = (org_settings.auto_approve_content if org_settings is not None
+                     else channel.auto_approve)
+        if not effective:
             return {"auto_published": False, "reason": "auto_approve_disabled"}
     await update_review_status(generated_post_id, "approved")
     return {"auto_published": True, "approved": True, "scheduled": True}

@@ -164,11 +164,76 @@ def _pk() -> Mapped[uuid.UUID]:
     return mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
 
 
+# ── 0. multi-tenancy: organizations / users / organization_settings ──────────
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[uuid.UUID] = _pk()
+    name: Mapped[str] = mapped_column(String(128))
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    users: Mapped[list[User]] = relationship(back_populates="organization", cascade="all, delete-orphan")
+    channels: Mapped[list[Channel]] = relationship(back_populates="organization")
+    settings: Mapped[OrganizationSettings | None] = relationship(
+        back_populates="organization", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = _pk()
+    name: Mapped[str] = mapped_column(String(128))
+    # nullable for now — authentication (and required identity) comes later.
+    email: Mapped[str | None] = mapped_column(String(255), unique=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), index=True
+    )
+    # Only users of the GrabOn organization may be admins — enforced in backend logic
+    # (tools/organizations.create_user), never trusted from the client.
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    organization: Mapped[Organization] = relationship(back_populates="users")
+
+
+class OrganizationSettings(Base):
+    __tablename__ = "organization_settings"
+
+    id: Mapped[uuid.UUID] = _pk()
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    # When True, generated content is auto-approved into the publishing queue;
+    # when False it stays pending for manual approve/reject (existing flow).
+    auto_approve_content: Mapped[bool] = mapped_column(Boolean, default=False)
+    # How many execution slots the Strategy Agent creates per day. NULL = use the
+    # current default behavior (config GRABON_* / engagement-inferred frequency).
+    daily_target_posts: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    organization: Mapped[Organization] = relationship(back_populates="settings")
+
+
 # ── 1. channels ──────────────────────────────────────────────────────────────
 class Channel(Base):
     __tablename__ = "channels"
 
     id: Mapped[uuid.UUID] = _pk()
+    # Every channel belongs to exactly one organization (backfilled to GrabOn).
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
+    )
     telegram_username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     telegram_id: Mapped[int | None] = mapped_column(BigInteger)
     display_name: Mapped[str | None] = mapped_column(String(128))
@@ -194,6 +259,7 @@ class Channel(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    organization: Mapped[Organization] = relationship(back_populates="channels")
     dna: Mapped[ChannelDNA | None] = relationship(
         back_populates="channel", uselist=False, cascade="all, delete-orphan"
     )

@@ -1,10 +1,34 @@
 export interface ChannelSummary {
   id: string;
+  organization_id?: string;
   telegram_username: string;
   display_name: string | null;
   tier: string | null;
   category: string | null;
   status: string | null;
+}
+
+export interface Me {
+  id: string | null;
+  name: string | null;
+  email: string | null;
+  organization_id: string | null;
+  org_slug: string | null;
+  is_admin: boolean;
+  is_platform_admin: boolean;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export interface OrgSettings {
+  id: string;
+  organization_id: string;
+  auto_approve_content: boolean;
+  daily_target_posts: number | null;
 }
 
 export interface Dashboard {
@@ -199,6 +223,15 @@ export interface Intelligence {
     recycle_candidates?: { text_preview: string; er: number; suggestion: string }[];
   };
   retention_plan: { kind: string; format: string | null; topic: string; date: string | null; status: string | null }[];
+}
+
+export interface User {
+  id: string;
+  name: string;
+  email: string | null;
+  organization_id: string;
+  org_slug: string;
+  is_admin: boolean;
 }
 
 export interface Competitor {

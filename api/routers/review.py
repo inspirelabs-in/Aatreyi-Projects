@@ -8,8 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import get_session
+from api.routers.channels import require_channel_access
 from api.schemas import EditPost, RejectPost, RunAgent
 from api import services
+from db.models import Channel
 from tools.content import get_review_queue, publish_generated_post, update_review_status
 
 router = APIRouter(prefix="/api/channels", tags=["review"])
@@ -45,14 +47,14 @@ async def _run_agent_bg(key: str, channel_id: str, username: str | None, agent: 
 
 
 @router.get("/{channel_id}/queue")
-async def queue(channel_id: str, session: AsyncSession = Depends(get_session)):
-    await _require(session, channel_id)
+async def queue(channel_id: str, session: AsyncSession = Depends(get_session),
+                _auth: Channel = Depends(require_channel_access)):
     return await services.get_queue(session, channel_id)
 
 
 @router.post("/{channel_id}/queue/{post_id}/approve")
-async def approve(channel_id: str, post_id: str, session: AsyncSession = Depends(get_session)):
-    channel = await _require(session, channel_id)
+async def approve(channel_id: str, post_id: str, session: AsyncSession = Depends(get_session),
+                  channel: Channel = Depends(require_channel_access)):
     res = await update_review_status(post_id, "approved")
     if not res.get("updated"):
         raise HTTPException(status_code=404, detail="post not found")
@@ -70,8 +72,8 @@ async def approve(channel_id: str, post_id: str, session: AsyncSession = Depends
 
 @router.post("/{channel_id}/queue/{post_id}/reject")
 async def reject(channel_id: str, post_id: str, body: RejectPost | None = None,
-                 session: AsyncSession = Depends(get_session)):
-    await _require(session, channel_id)
+                 session: AsyncSession = Depends(get_session),
+                 _auth: Channel = Depends(require_channel_access)):
     res = await update_review_status(post_id, "rejected")
     if not res.get("updated"):
         raise HTTPException(status_code=404, detail="post not found")
@@ -80,8 +82,8 @@ async def reject(channel_id: str, post_id: str, body: RejectPost | None = None,
 
 @router.put("/{channel_id}/queue/{post_id}")
 async def edit(channel_id: str, post_id: str, body: EditPost,
-               session: AsyncSession = Depends(get_session)):
-    await _require(session, channel_id)
+               session: AsyncSession = Depends(get_session),
+               _auth: Channel = Depends(require_channel_access)):
     res = await update_review_status(post_id, "edited", edited_text=body.edited_text)
     if not res.get("updated"):
         raise HTTPException(status_code=404, detail="post not found")
@@ -90,9 +92,9 @@ async def edit(channel_id: str, post_id: str, body: EditPost,
 
 @router.post("/{channel_id}/agents/run", status_code=202)
 async def run_agent(channel_id: str, body: RunAgent,
-                    session: AsyncSession = Depends(get_session)):
+                    session: AsyncSession = Depends(get_session),
+                    channel: Channel = Depends(require_channel_access)):
     """Kick off an agent run in the background and return immediately."""
-    channel = await _require(session, channel_id)
     if body.agent not in services.KNOWN_AGENTS:
         raise HTTPException(status_code=400, detail=f"unknown agent {body.agent!r}")
     if body.agent == "content" and not body.task_id:
@@ -110,7 +112,8 @@ async def run_agent(channel_id: str, body: RunAgent,
 
 @router.post("/{channel_id}/agents/cancel", status_code=200)
 async def cancel_agent(channel_id: str, body: RunAgent,
-                       session: AsyncSession = Depends(get_session)):
+                       session: AsyncSession = Depends(get_session),
+                       _auth: Channel = Depends(require_channel_access)):
     """Cancel a running agent for this channel.
 
     Accepts both short names ('competitor') and full enum names
@@ -121,7 +124,6 @@ async def cancel_agent(channel_id: str, body: RunAgent,
     from db.models import AgentRun, AgentName, RunStatus
     from sqlalchemy import select, update
 
-    await _require(session, channel_id)
     short = _AGENT_ALIAS.get(body.agent, body.agent)
     key = f"{channel_id}:{short}"
 
@@ -157,10 +159,3 @@ async def cancel_agent(channel_id: str, body: RunAgent,
         log.warning("cancel: failed to clear DB run record: %s", exc)
 
     return {"agent": body.agent, "status": "cancelled"}
-
-
-async def _require(session: AsyncSession, channel_id: str):
-    ch = await services.get_channel_or_none(session, channel_id)
-    if ch is None:
-        raise HTTPException(status_code=404, detail="channel not found")
-    return ch

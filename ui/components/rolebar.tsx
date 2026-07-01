@@ -5,12 +5,18 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getRole, setRole, type Role } from "@/lib/role";
 
-const USER_NAV = [{ href: "/", label: "My Channels" }];
+const USER_NAV = [
+  { href: "/", label: "My Channels" },
+  { href: "/settings", label: "Settings" },
+  { href: "/settings/users", label: "Users" },
+];
 const ADMIN_NAV = [
   { href: "/admin", label: "Global Control Room" },
   { href: "/admin/channels", label: "All Channels" },
   { href: "/admin/health", label: "System Health" },
   { href: "/admin/performance", label: "Agent Performance" },
+  { href: "/organizations/new", label: "New Org" },
+  { href: "/settings/users", label: "Users" },
 ];
 
 export function RoleBar() {

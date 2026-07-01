@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api import services
 from api.db import get_session, AsyncSessionLocal
-from api.routers import admin, channels, review
+from api.routers import admin, channels, organizations, review
 from config import settings
 from db.models import AgentRun, RunStatus
 
@@ -107,6 +107,7 @@ app.add_middleware(
 
 app.include_router(channels.router)
 app.include_router(review.router)
+app.include_router(organizations.router)
 app.include_router(admin.router)
 
 

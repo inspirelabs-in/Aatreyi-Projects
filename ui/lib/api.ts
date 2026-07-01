@@ -1,7 +1,7 @@
 import type {
   AdminChannelRow, AdminOverview, AgentPerf, AnalyticsPoint, ChannelSettings, ChannelSummary,
-  Competitor, ContentSourceRow, ControlState, Dashboard, GlobalEvent, Intelligence, QueueItem,
-  Strategy, SubscriberPoint, SystemHealth,
+  Competitor, ContentSourceRow, ControlState, Dashboard, GlobalEvent, Intelligence, Me,
+  Organization, OrgSettings, QueueItem, Strategy, SubscriberPoint, SystemHealth, User,
 } from "./types";
 import { getRole } from "./role";
 
@@ -21,6 +21,16 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // ── organization CRUD ──
+  createOrganization: (body: { name: string; slug?: string }) =>
+    req<Organization>("/api/organizations", { method: "POST", body: JSON.stringify(body) }),
+
+  // ── user management ──
+  listUsers: (orgId: string) => req<User[]>("/api/organizations/" + encodeURIComponent(orgId) + "/users"),
+  createUser: (orgId: string, body: { name: string; email?: string; is_admin?: boolean }) =>
+    req<User>("/api/organizations/" + encodeURIComponent(orgId) + "/users", { method: "POST", body: JSON.stringify(body) }),
+
+  // ── existing api methods ──
   listChannels: () => req<ChannelSummary[]>("/api/channels"),
   onboard: (body: { telegram_username: string; category?: string; growth_goal?: string }) =>
     req<{ channel_id: string }>("/api/channels", { method: "POST", body: JSON.stringify(body) }),
@@ -70,6 +80,16 @@ export const api = {
     req<{ agent: string; status: string }>(`/api/channels/${id}/agents/cancel`, {
       method: "POST",
       body: JSON.stringify({ agent }),
+    }),
+
+  // ── organization / current user / org settings ──
+  me: () => req<Me>("/api/me"),
+  organizations: () => req<Organization[]>("/api/organizations"),
+  orgSettings: (orgId?: string) =>
+    req<OrgSettings>(`/api/settings${orgId ? `?organization_id=${orgId}` : ""}`),
+  updateOrgSettings: (body: { auto_approve_content?: boolean; daily_target_posts?: number | null }, orgId?: string) =>
+    req<OrgSettings>(`/api/settings${orgId ? `?organization_id=${orgId}` : ""}`, {
+      method: "PATCH", body: JSON.stringify(body),
     }),
 
   // ── admin (system owner) ──
