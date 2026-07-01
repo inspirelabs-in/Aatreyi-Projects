@@ -99,6 +99,14 @@ def _parse_preview(html: str, handle: str) -> dict[str, Any] | None:
             val = c.select_one(".counter_value")
             member_count = _parse_count(val.get_text(strip=True) if val else None)
             break
+    # Fallback for the plain t.me/<handle> page (when /s/ 302-redirects to it):
+    # subscriber count lives in .tgme_page_extra ("12 345 subscribers").
+    if member_count is None:
+        extra = soup.select_one(".tgme_page_extra")
+        if extra:
+            m = re.search(r"([\d.,\sKMkm]+?)\s*(?:subscriber|member)", extra.get_text(" ", strip=True))
+            if m:
+                member_count = _parse_count(m.group(1))
 
     posts: list[dict[str, Any]] = []
     for w in soup.select(".tgme_widget_message"):
