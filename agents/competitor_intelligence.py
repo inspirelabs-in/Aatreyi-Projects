@@ -122,12 +122,44 @@ class CompetitorIntelligenceAgent(BaseAgent):
             hl = h.lstrip("@").lower()
             if hl in seen_handles or _is_spam_channel(hl):
                 return None
+            # Primary: Telethon (MTProto). Fallback: Telegram's public web preview
+            # (t.me/s) when the session can't reach the channel — so a confirmed
+            # handle still yields data (subscribers, recent posts, themes).
+            info: dict | None = None
             try:
                 info = await get_telegram_channel_info(client, h)
             except Exception:
-                return None
-            members = info.get("member_count") or 0
-            posts = (await get_competitor_top_posts(client, h))["posts"]
+                info = None
+            members = (info or {}).get("member_count") or 0
+            posts = []
+            if info is not None:
+                try:
+                    posts = (await get_competitor_top_posts(client, h))["posts"]
+                except Exception:
+                    posts = []
+            web_sourced = False
+            if info is None or (members == 0 and not posts):
+                from tools.telegram_web import fetch_tme_preview
+                web = await fetch_tme_preview(h)
+                if web is None:
+                    return None
+                web_sourced = True
+                members = web.get("member_count") or members
+                # Map web posts to the metric shape (reactions/forwards unavailable
+                # on the public preview → engagement rate is not measurable here).
+                # posted_at is an ISO string on the web preview; metrics needs
+                # datetime objects, so parse it (drop unparseable ones).
+                from datetime import datetime as _dt
+                def _iso(s):
+                    try:
+                        return _dt.fromisoformat(str(s).replace("Z", "+00:00")) if s else None
+                    except Exception:
+                        return None
+                posts = [{"text": p.get("text") or "", "views": p.get("views") or 0,
+                          "forwards": 0, "reactions": 0, "posted_at": _iso(p.get("posted_at"))}
+                         for p in (web.get("posts") or [])]
+                info = info or {"title": web.get("title"), "channel_id": None,
+                                "has_disappearing_messages": False}
             metrics = compute_competitor_metrics(posts, members)
             peer_subs = 0 if skip_peer_ratio else my_subs
             ok, _ = qualifies_as_competitor(members, len(posts), metrics, peer_subs)
@@ -136,9 +168,11 @@ class CompetitorIntelligenceAgent(BaseAgent):
             seen_handles.add(hl)
             return {
                 "display_name": info.get("title") or h,
-                "username": h.lstrip("@"), "source": source,
+                "username": h.lstrip("@"), "source": source + ("+web" if web_sourced else ""),
                 "competitor_tg_id": info.get("channel_id"),
-                "subscriber_count": members, "avg_er": metrics["avg_er"],
+                "subscriber_count": members,
+                # Web preview has no reactions/forwards, so ER is unknown (not 0).
+                "avg_er": None if web_sourced else metrics["avg_er"],
                 "post_frequency_per_day": metrics["post_frequency_per_day"],
                 "top_themes": metrics["top_themes"],
                 "has_disappearing_messages": bool(info.get("has_disappearing_messages")),

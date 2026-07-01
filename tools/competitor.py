@@ -557,6 +557,18 @@ async def find_brand_telegram_channels(brand: str, client=None, max_per: int = 3
     for u in strong + weak:
         _add(u)
 
+    # 3. Public-web verification (t.me/s) — confirms a handle by actually loading the
+    #    channel's public preview. Catches brands that Telegram in-app search and
+    #    DDGS both miss, and works even when the Telethon session is unavailable.
+    if not found:
+        try:
+            from tools.telegram_web import resolve_brand_handle
+            data = await resolve_brand_handle(brand)
+            if data and data.get("username"):
+                _add(data["username"])
+        except Exception:
+            pass
+
     return [f"@{u}" if not u.startswith("@") else u for u in found[:max_per]]
 
 
