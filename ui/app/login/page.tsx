@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { login } from "@/lib/auth";
+import { login, STATIC_PASSWORD } from "@/lib/auth";
 import { BRAND } from "@/lib/brand";
 import { Logo } from "@/components/Logo";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("admin@grabon.in");
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState(STATIC_PASSWORD);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -45,6 +45,12 @@ export default function LoginPage() {
             className="mt-5 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50">
             {busy ? "Signing in…" : "Sign in"}
           </button>
+
+          <div className="mt-4 rounded-lg border border-edge bg-field px-3 py-2 text-xs text-slate-500">
+            <span className="font-medium text-slate-600">Demo access</span> — password{" "}
+            <code className="rounded bg-white px-1 py-0.5 text-slate-700 ring-1 ring-inset ring-slate-200">{STATIC_PASSWORD}</code>.
+            Sign in as <code className="text-slate-700">admin@grabon.in</code> (admin) or any team member's email.
+          </div>
         </form>
         <p className="mt-4 text-center text-xs text-slate-400">
           <Link href="/" className="hover:text-slate-600">← Back to home</Link>
