@@ -21,10 +21,15 @@ from __future__ import annotations
 import html as _html
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from config import settings
 from tools.content import _title_fingerprint, is_title_dupe
 from tools.deal_scrapers import is_junk_title
+
+# Greeting/time must be on the audience clock (IST), not the container's UTC —
+# otherwise a 6:36 pm IST post is labelled "Afternoon" (13:06 UTC).
+_LOCAL_TZ = ZoneInfo(settings.SCHEDULER_TIMEZONE)
 
 # Broad headings (ordered) -> the scrape categories that fall under them.
 LOOT_BUCKETS: list[tuple[str, set[str]]] = [
@@ -100,8 +105,9 @@ def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
     """Compose a loot post from the deal pool, grouped by bucket, skipping products
     already posted recently (``seen`` fingerprints). Returns
     {post_text(HTML), used} or None if too few fresh deals."""
-    now = datetime.now()
+    now = datetime.now(_LOCAL_TZ)
     used_fps = list(seen)
+    seen_urls: set[str] = set()  # no repeated product links within the post
     sections: list[str] = []
     used: list[dict] = []
     for heading, cats in LOOT_BUCKETS:
@@ -116,12 +122,18 @@ def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
             url = (d.get("affiliate_url") or d.get("product_url") or "").strip()
             if not url:
                 continue
+            # Dedup by URL (base, ignoring query) AND by title so the same product
+            # can never appear twice in one loot post.
+            url_key = url.split("?")[0].rstrip("/").lower()
+            if url_key in seen_urls:
+                continue
             if is_junk_title(d.get("title")):
                 continue
             if is_title_dupe(d.get("title"), used_fps):
                 continue
             lines.append(f'• <a href="{_html.escape(url, quote=True)}">{_html.escape(_label(d))}</a>')
             used.append(d)
+            seen_urls.add(url_key)
             used_fps.append(_title_fingerprint(d.get("title")))
         if lines:
             sections.append(f"<b>{heading}</b>\n" + "\n".join(lines))

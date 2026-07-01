@@ -540,8 +540,6 @@ async def find_brand_telegram_channels(brand: str, client=None, max_per: int = 3
                     _add(uname)
         except Exception:
             pass
-        if found:  # Telegram gave us solid matches — skip the slower web fallbacks
-            return [f"@{u}" for u in found[:max_per]]
 
     # 2. Web search for t.me links (fallback / no Telegram client)
     strong: list[str] = []
@@ -557,20 +555,22 @@ async def find_brand_telegram_channels(brand: str, client=None, max_per: int = 3
     for u in strong + weak:
         _add(u)
 
-    # 3. Public-web verification (t.me/s) — FALLBACK ONLY (when Telegram search +
-    #    DDGS found nothing), so it doesn't slow every run. Loads the channel's
-    #    public preview to confirm a real handle even when the Telethon session is
-    #    down or the brand isn't surfaced by in-app search.
-    if not found:
-        try:
-            from tools.telegram_web import resolve_brand_handle
-            data = await resolve_brand_handle(brand)
-            if data and data.get("username"):
-                _add(data["username"])
-        except Exception:
-            pass
+    # 3. Public-web verification (t.me/s), ALWAYS run (httpx-only, fast). It loads
+    #    the channel's public preview to CONFIRM a real handle that matches the
+    #    brand — reliable even when the Telethon session is down or in-app search
+    #    returns weak/no matches. The verified handle is trusted, so it goes FIRST
+    #    (a weak Telegram guess can't shadow the confirmed channel).
+    web_handle: str | None = None
+    try:
+        from tools.telegram_web import resolve_brand_handle
+        data = await resolve_brand_handle(brand)
+        if data and data.get("username"):
+            web_handle = data["username"].lstrip("@").lower()
+    except Exception:
+        pass
 
-    return [f"@{u}" if not u.startswith("@") else u for u in found[:max_per]]
+    ordered = ([web_handle] if web_handle else []) + [u for u in found if u != web_handle]
+    return [f"@{u}" for u in ordered[:max_per]]
 
 
 # ── Benchmarks (pure) — what Strategy targets against ────────────────────────

@@ -188,7 +188,7 @@ async def resolve_brand_handle(brand: str) -> dict[str, Any] | None:
     first relevant match with its preview data, else None (never a wrong channel)."""
     tried: set[str] = set()
     # Cap total verifications per brand — each is one httpx GET; keep runs fast.
-    candidates = (await _search_handles(brand) + _slug_candidates(brand))[:6]
+    candidates = (await _search_handles(brand) + _slug_candidates(brand))[:4]
     matches: list[dict[str, Any]] = []
     for h in candidates:
         h = h.lstrip("@").lower()
