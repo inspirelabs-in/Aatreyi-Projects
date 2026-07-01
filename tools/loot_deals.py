@@ -137,8 +137,9 @@ def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
             used_fps.append(_title_fingerprint(d.get("title")))
         if lines:
             sections.append(f"<b>{heading}</b>\n" + "\n".join(lines))
-    # Need a reasonable post (at least 2 sections / several links) to be worth it.
-    if len(sections) < 2 or len(used) < 4:
+    # Post is worthwhile with EITHER one category or many — a single full bucket
+    # (>=3 links) is enough. Only bail when there's essentially nothing to show.
+    if len(sections) < 1 or len(used) < 3:
         return None
     text = f"🔥🔥 {greeting(now)} Loot Deals 🔥🔥\n\n" + "\n\n".join(sections)
     text += "\n\n🛍️ Tap any item to grab the deal!"
