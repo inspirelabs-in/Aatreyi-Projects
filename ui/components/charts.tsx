@@ -12,9 +12,11 @@ const AXIS = { stroke: "#94a3b8", fontSize: 11 };
 const GRID = "#eef2f7";
 
 function ChartFrame({ height = 220, children }: { height?: number; children: React.ReactElement }) {
+  // Explicit pixel height on ResponsiveContainer — height="100%" collapses to 0
+  // inside grid/flex parents (the "charts not showing" bug).
   return (
-    <div style={{ width: "100%", height }}>
-      <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer>
+    <div style={{ width: "100%", minHeight: height }}>
+      <ResponsiveContainer width="100%" height={height}>{children}</ResponsiveContainer>
     </div>
   );
 }
@@ -80,8 +82,8 @@ export function Donut({ data, nameKey, valueKey, height = 220 }: {
 }) {
   return (
     <div className="flex items-center gap-4">
-      <div style={{ width: 160, height }}>
-        <ResponsiveContainer width="100%" height="100%">
+      <div style={{ width: 160, minHeight: height }}>
+        <ResponsiveContainer width={160} height={height}>
           <PieChart>
             <Pie data={data} dataKey={valueKey} nameKey={nameKey} cx="50%" cy="50%"
                  innerRadius={48} outerRadius={72} paddingAngle={2} stroke="none">
