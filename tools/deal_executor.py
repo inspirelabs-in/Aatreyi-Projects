@@ -99,6 +99,23 @@ async def execute_deal_slot(
         log.info("deal slot %s: no fresh %s deal after ranking", task.get("id"), kind)
         return None
 
+    # 4b. Strategy-context-aware caption for SINGLE-product posts: the Content
+    #     Generator shapes headline/hook/CTA/emoji/urgency from DNA + today's
+    #     strategy + this slot's reason + competitor intelligence (guidance, never
+    #     copied), not from the deal alone. Loot stays a structured multi-deal list.
+    #     Any failure → keep the template caption (pipeline never breaks).
+    if kind == "single" and post.get("used"):
+        try:
+            from tools.content import generate_deal_caption
+            from tools.strategy_context import build_strategy_context
+            ctx = await build_strategy_context(cid)
+            cap = await generate_deal_caption(post["used"][0], ctx, task.get("rationale"))
+            if cap and cap.get("post_text"):
+                post["post_text"] = cap["post_text"]
+                post["cta"] = cap.get("cta") or post.get("cta")
+        except Exception:
+            pass
+
     # 5. queue for approval (auto-approved when the channel is autonomous). The
     #    slot's scheduled_at makes publish_due_posts send it AT its planned time.
     gp_payload = {

@@ -780,7 +780,8 @@ _KIND_INSTRUCTION = {
 }
 
 
-def _base_user_prompt(task: dict, dna: dict, content_item: dict | None) -> str:
+def _base_user_prompt(task: dict, dna: dict, content_item: dict | None,
+                      strategy_context: dict | None = None) -> str:
     category = dna.get("category") or "general"
     topics = dna.get("top_topics") or []
     topics_str = ", ".join(str(t) for t in topics[:5]) if topics else category
@@ -811,6 +812,12 @@ def _base_user_prompt(task: dict, dna: dict, content_item: dict | None) -> str:
             f"Source title: {content_item.get('title')}\n"
             f"Source details: {(content_item.get('body_text') or '')[:800]}\n"
         )
+    # Strategy Context (Channel DNA + today's strategy + slot reason + audience +
+    # tone + competitor intelligence + historical engagement + trending themes +
+    # preferred CTA) so the caption is shaped by strategy, not the deal alone.
+    if strategy_context:
+        from tools.strategy_context import strategy_context_prompt
+        p += strategy_context_prompt(strategy_context, task.get("rationale") or task.get("reason"))
     return p
 
 
@@ -844,7 +851,8 @@ async def _fetch_topic_image_url(topic: str | None, category: str | None = None)
     return None
 
 
-async def _generate(task: dict, dna: dict, content_item: dict | None, is_original: bool) -> dict[str, Any]:
+async def _generate(task: dict, dna: dict, content_item: dict | None, is_original: bool,
+                    strategy_context: dict | None = None) -> dict[str, Any]:
     """Format-aware generation for text / poll / photo / video / link."""
     fmt = _gen_format(task.get("format"))
     media_url = (content_item or {}).get("image_url")
@@ -864,14 +872,14 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
             fmt = "text"
 
     if fmt == "poll":
-        raw = await chat_complete(_GEN_SYSTEM_POLL, _base_user_prompt(task, dna, content_item))
+        raw = await chat_complete(_GEN_SYSTEM_POLL, _base_user_prompt(task, dna, content_item, strategy_context))
         poll = parse_poll_json(raw)
         out = {
             "post_text": poll["question"], "poll_options": poll["options"],
             "cta": "", "hashtags": poll["hashtags"], "media_url": None, "link_url": None,
         }
     else:
-        user = _base_user_prompt(task, dna, content_item)
+        user = _base_user_prompt(task, dna, content_item, strategy_context)
         if is_deals:
             # Broadcast deal announcement: state product + price + discount, end with
             # a short grab-the-deal CTA. NEVER ask the audience anything — they can't reply.
@@ -916,18 +924,70 @@ async def _generate(task: dict, dna: dict, content_item: dict | None, is_origina
     out["cta"] = _clean_text(out.get("cta"))
     out.update({
         "format": fmt, "llm_model": settings.GROQ_MODEL,
-        "generation_prompt": _base_user_prompt(task, dna, content_item),
+        "generation_prompt": _base_user_prompt(task, dna, content_item, strategy_context),
         "is_original": is_original,
     })
     return out
 
 
-async def generate_post(content_item: dict, task: dict, channel_dna: dict) -> dict[str, Any]:
-    return await _generate(task, channel_dna, content_item, is_original=False)
+async def generate_deal_caption(deal: dict, strategy_context: dict | None = None,
+                                slot_reason: str | None = None) -> dict[str, Any] | None:
+    """Strategy-context-aware caption for a SINGLE product deal (used by the deal
+    executor). Returns {post_text, cta} or None on any failure so the caller can
+    fall back to the plain template — the deal pipeline never breaks on this.
+
+    Uses the deal facts + strategy context to shape headline/hook/CTA/emoji/urgency.
+    Never writes a URL in the body (a clickable button carries the one link)."""
+    if not getattr(settings, "GROQ_API_KEY", None):
+        return None
+    title = " ".join((deal.get("title") or "").split())
+    if not title:
+        return None
+    pct = deal.get("discount_pct")
+    cur = deal.get("current_price")
+    orig = deal.get("original_price")
+    facts = (f"Product: {title}\nMarketplace: {deal.get('platform')}\n"
+             f"Price: {cur}" + (f" (was {orig})" if orig else "")
+             + (f"\nDiscount: {pct}% OFF" if pct else ""))
+    from tools.strategy_context import strategy_context_prompt
+    ctx_block = strategy_context_prompt(strategy_context, slot_reason)
+    system = ("You write short, punchy, ORIGINAL Telegram deal-announcement captions for a "
+              "broadcast deals channel. Never ask the audience anything (they can't reply). "
+              "Never write a URL/link in the text — a clickable button is attached. Output STRICT "
+              "JSON: {\"text\": <caption>, \"cta\": <2-4 word button label>}.")
+    user = (f"{facts}\n{ctx_block}\n"
+            "Write a 1-3 line caption: hook + product + price/discount + light urgency, with a few "
+            "fitting emojis. Then a short CTA button label. Original copy — do NOT reuse any competitor "
+            "caption. Return ONLY the JSON.")
+    try:
+        raw = await chat_complete(system, user, max_tokens=200, temperature=0.6)
+        import json as _json
+        s = (raw or "").strip()
+        if "```" in s:
+            s = s.split("```")[1].replace("json", "", 1) if s.count("```") >= 2 else s
+        start, end = s.find("{"), s.rfind("}")
+        if start < 0 or end < 0:
+            return None
+        data = _json.loads(s[start:end + 1])
+        text = _clean_text(_sanitize_urls(str(data.get("text") or "").strip(), None))
+        cta = _strip_linky_cta(_clean_text(str(data.get("cta") or "").strip())) or "Grab Deal"
+        if not text:
+            return None
+        return {"post_text": text, "cta": f"🛒 {cta}" if not cta.startswith(("🛒", "🛍")) else cta}
+    except Exception:
+        return None
 
 
-async def generate_original_post(task: dict, channel_dna: dict) -> dict[str, Any]:
-    return await _generate(task, channel_dna, None, is_original=True)
+async def generate_post(content_item: dict, task: dict, channel_dna: dict,
+                        strategy_context: dict | None = None) -> dict[str, Any]:
+    return await _generate(task, channel_dna, content_item, is_original=False,
+                           strategy_context=strategy_context)
+
+
+async def generate_original_post(task: dict, channel_dna: dict,
+                                 strategy_context: dict | None = None) -> dict[str, Any]:
+    return await _generate(task, channel_dna, None, is_original=True,
+                           strategy_context=strategy_context)
 
 
 # ── Review queue ─────────────────────────────────────────────────────────────

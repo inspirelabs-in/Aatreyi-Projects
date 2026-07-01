@@ -55,6 +55,15 @@ class ContentIntelligenceAgent(BaseAgent):
         if not task:
             raise ValueError(f"strategy_task {task_id} not found")
         context = await load_content_context(channel_id)
+        # Strategy Context (DNA, today's strategy, slot reason, audience, tone,
+        # competitor intelligence, historical engagement, trending themes, CTA style)
+        # — passed to EVERY generation so captions are shaped by strategy, not the
+        # source/deal alone. Best-effort: never block generation on it.
+        try:
+            from tools.strategy_context import build_strategy_context
+            strategy_ctx = await build_strategy_context(channel_id)
+        except Exception:
+            strategy_ctx = None
 
         # Recycle slots reuse a past break-out post instead of fetching sources.
         # For deal/ephemeral content: first verify the candidate URL is still live.
@@ -73,7 +82,7 @@ class ContentIntelligenceAgent(BaseAgent):
                     "topics": [],
                     "format_tag": task.get("format"),
                 }
-                post = await generate_post(item, task, context.get("channel_dna") or {})
+                post = await generate_post(item, task, context.get("channel_dna") or {}, strategy_context=strategy_ctx)
                 queued = await add_to_review_queue(channel_id, post, task, None)
                 auto = await maybe_auto_publish(channel_id, queued["generated_post_id"])
                 return {
@@ -159,7 +168,7 @@ class ContentIntelligenceAgent(BaseAgent):
                 }
             item = self._pick_deal_item(real_deals, task.get("topic"))
             content_item_id = await save_content_item(channel_id, item.get("_source_id"), item)
-            post = await generate_post(item, task, dna)
+            post = await generate_post(item, task, dna, strategy_context=strategy_ctx)
             # Final guard: never queue a deal post without a real link.
             if not (post.get("link_url") or "").strip():
                 log.info("deals slot %s skipped: generated post had no link", task_id)
@@ -195,11 +204,11 @@ class ContentIntelligenceAgent(BaseAgent):
             await save_content_score(content_item_id, channel_id, top["scores"])
             if item.get("_source_id"):
                 await update_source_quality_score(item["_source_id"], top["scores"]["total"])
-            post = await generate_post(item, task, dna)
+            post = await generate_post(item, task, dna, strategy_context=strategy_ctx)
         else:
             # 3. fallback: original post on the topic
             used_original = True
-            post = await generate_original_post(task, dna)
+            post = await generate_original_post(task, dna, strategy_context=strategy_ctx)
 
         queued = await add_to_review_queue(channel_id, post, task, content_item_id)
         auto = await maybe_auto_publish(channel_id, queued["generated_post_id"])
