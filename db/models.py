@@ -234,6 +234,11 @@ class Channel(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="RESTRICT"), index=True
     )
+    # Owning user. Normal users see ONLY channels they own; the GrabOn Platform
+    # Admin sees all. NULL = admin-owned/unassigned (visible only to the admin).
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     telegram_username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     telegram_id: Mapped[int | None] = mapped_column(BigInteger)
     display_name: Mapped[str | None] = mapped_column(String(128))

@@ -1,11 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { Me, Organization as Org, User } from "@/lib/types";
 import { Badge, Card, ErrorBox, Spinner } from "@/components/ui";
 
 export default function UsersPage() {
+  return (
+    <Suspense fallback={<Spinner />}>
+      <UsersPageInner />
+    </Suspense>
+  );
+}
+
+function UsersPageInner() {
+  const searchParams = useSearchParams();
+  const orgParam = searchParams.get("org_id");
   const [me, setMe] = useState<Me | null>(null);
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState<string>("");
@@ -23,7 +34,9 @@ export default function UsersPage() {
       if (m.is_platform_admin) {
         const all = await api.organizations();
         setOrgs(all);
-        setSelectedOrgId(m.organization_id || (all[0]?.id ?? ""));
+        // Honor ?org_id (e.g. right after creating an org) when it's a real org.
+        const fromParam = orgParam && all.some((o) => o.id === orgParam) ? orgParam : null;
+        setSelectedOrgId(fromParam || m.organization_id || (all[0]?.id ?? ""));
       } else {
         setSelectedOrgId(m.organization_id ?? "");
       }
@@ -87,12 +100,12 @@ export default function UsersPage() {
           <form onSubmit={handleInvite} className="flex flex-wrap items-end gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-600">Name *</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Alice"
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name"
                 className="mt-1 w-52 rounded-lg border border-edge bg-field px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600">Email</label>
-              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="alice@example.com"
+              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com"
                 className="mt-1 w-52 rounded-lg border border-edge bg-field px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20" />
             </div>
             {me.is_platform_admin && (

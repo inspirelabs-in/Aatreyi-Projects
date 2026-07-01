@@ -3,14 +3,19 @@ import type {
   Competitor, ContentSourceRow, ControlState, Dashboard, GlobalEvent, Intelligence, Me,
   Organization, OrgSettings, QueueItem, Strategy, SubscriberPoint, SystemHealth, User,
 } from "./types";
-import { getRole } from "./role";
+import { getActingUser } from "./currentUser";
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  // Identify the simulated current user: X-User-Email drives tenancy (which
+  // channels/settings you can see); X-Role drives the legacy admin dashboard.
+  const acting = getActingUser();
+  const authHeaders: Record<string, string> = { "X-Role": acting.is_admin ? "admin" : "user" };
+  if (acting.email) authHeaders["X-User-Email"] = acting.email;
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", "X-Role": getRole(), ...(init?.headers || {}) },
+    headers: { "Content-Type": "application/json", ...authHeaders, ...(init?.headers || {}) },
     cache: "no-store",
   });
   if (!res.ok) {
@@ -26,13 +31,14 @@ export const api = {
     req<Organization>("/api/organizations", { method: "POST", body: JSON.stringify(body) }),
 
   // ── user management ──
+  usersList: () => req<User[]>("/api/users"),
   listUsers: (orgId: string) => req<User[]>("/api/organizations/" + encodeURIComponent(orgId) + "/users"),
   createUser: (orgId: string, body: { name: string; email?: string; is_admin?: boolean }) =>
     req<User>("/api/organizations/" + encodeURIComponent(orgId) + "/users", { method: "POST", body: JSON.stringify(body) }),
 
   // ── existing api methods ──
   listChannels: () => req<ChannelSummary[]>("/api/channels"),
-  onboard: (body: { telegram_username: string; category?: string; growth_goal?: string }) =>
+  onboard: (body: { telegram_username: string; category?: string; growth_goal?: string; organization_id?: string }) =>
     req<{ channel_id: string }>("/api/channels", { method: "POST", body: JSON.stringify(body) }),
 
   dashboard: (id: string) => req<Dashboard>(`/api/channels/${id}/dashboard`),

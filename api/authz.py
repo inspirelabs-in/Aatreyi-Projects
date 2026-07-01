@@ -69,11 +69,16 @@ def is_platform_admin(user: CurrentUser) -> bool:
 
 
 def can_access_channel(user: CurrentUser, channel) -> bool:
-    return is_platform_admin(user) or str(channel.organization_id) == str(user.organization_id)
+    # Per-user ownership: a normal user may only see channels they own. The GrabOn
+    # Platform Admin sees/monitors every channel.
+    if is_platform_admin(user):
+        return True
+    owner = getattr(channel, "owner_user_id", None)
+    return owner is not None and str(owner) == str(user.id)
 
 
 def can_manage_channel(user: CurrentUser, channel) -> bool:
-    return is_platform_admin(user) or str(channel.organization_id) == str(user.organization_id)
+    return can_access_channel(user, channel)
 
 
 def can_manage_organization(user: CurrentUser, org_id: str) -> bool:

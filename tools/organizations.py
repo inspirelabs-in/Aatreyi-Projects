@@ -147,6 +147,17 @@ async def create_organization(name: str, slug: str | None = None) -> dict[str, A
         return _org_dict(org)
 
 
+async def list_all_users() -> list[dict[str, Any]]:
+    """All users across all orgs (identity list for the pre-auth user switcher)."""
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(
+            select(User, Organization)
+            .join(Organization, User.organization_id == Organization.id)
+            .order_by(Organization.name.asc(), User.created_at.asc())
+        )).all()
+        return [_user_ctx(u, org) for (u, org) in rows]
+
+
 async def list_users(org_id: str | uuid.UUID) -> list[dict[str, Any]]:
     oid = uuid.UUID(str(org_id))
     async with AsyncSessionLocal() as s:

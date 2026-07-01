@@ -26,6 +26,15 @@ from tools.organizations import (
 router = APIRouter(prefix="/api", tags=["organizations"])
 
 
+@router.get("/users")
+async def all_users(current_user: CurrentUser = Depends(get_current_user)):
+    """Identity list for the pre-auth user switcher (who you can act as). This is a
+    temporary simulation helper — real auth will remove it and derive the user from
+    the session/token instead."""
+    from tools.organizations import list_all_users
+    return await list_all_users()
+
+
 @router.get("/me")
 async def me(current_user: CurrentUser = Depends(get_current_user)):
     """The simulated logged-in user (default = GrabOn Platform Admin)."""

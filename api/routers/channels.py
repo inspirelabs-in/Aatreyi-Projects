@@ -49,17 +49,22 @@ async def _auto_onboard(channel_id: str) -> None:
 @router.get("")
 async def list_channels(session: AsyncSession = Depends(get_session),
                         current_user: CurrentUser = Depends(get_current_user)):
-    """Platform Admin sees every channel; a normal user sees only their own
-    organization's channels. Filtering happens in the query, never on the client."""
+    """Platform Admin sees every channel; a normal user sees ONLY the channels they
+    own. Filtering happens in the query, never on the client."""
     q = select(Channel).order_by(Channel.created_at.desc())
     if not is_platform_admin(current_user):
         import uuid as _uuid
-        q = q.where(Channel.organization_id == _uuid.UUID(str(current_user.organization_id)))
+        try:
+            uid = _uuid.UUID(str(current_user.id))
+        except (ValueError, TypeError):
+            return []  # simulated user with no real id → owns nothing
+        q = q.where(Channel.owner_user_id == uid)
     rows = (await session.execute(q)).scalars().all()
     return [
         {
             "id": str(r.id),
             "organization_id": str(r.organization_id),
+            "owner_user_id": str(r.owner_user_id) if r.owner_user_id else None,
             "telegram_username": r.telegram_username,
             "display_name": r.display_name,
             "tier": r.tier.value if r.tier else None,
@@ -85,9 +90,15 @@ async def onboard_channel(body: OnboardChannel, background: BackgroundTasks,
         grab = await get_grabon_org()
         org_id = grab["id"] if grab else None
     import uuid as _uuid
+    # Ownership: a normal user owns the channel they create. When a Platform Admin
+    # creates one, it stays admin-owned (owner=NULL) unless it's their own org.
+    owner_id = None
+    if not is_platform_admin(current_user) and current_user.id:
+        owner_id = _uuid.UUID(str(current_user.id))
     channel = await get_or_create_channel(
         body.telegram_username,
         organization_id=_uuid.UUID(str(org_id)) if org_id else None,
+        owner_user_id=owner_id,
         category=body.category,
         growth_goal=body.growth_goal,
         language=body.language,

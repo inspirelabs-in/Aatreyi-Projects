@@ -68,6 +68,6 @@ class CreateOrganization(BaseModel):
 
 
 class CreateUser(BaseModel):
-    name: str = Field(..., min_length=1, max_length=128, examples=["Alice"])
-    email: str | None = Field(None, max_length=255, examples=["alice@example.com"])
+    name: str = Field(..., min_length=1, max_length=128, examples=["Team member"])
+    email: str | None = Field(None, max_length=255, examples=["user@company.com"])
     is_admin: bool = False
