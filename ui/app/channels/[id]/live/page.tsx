@@ -20,6 +20,14 @@ function dur(ms: number | null): string {
   if (ms == null) return "";
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
+// Drop noisy raw IDs (strategy_id: <uuid>, task_id: <uuid>) from summaries/results
+// and keep only the human-readable bits.
+function clean(s: string | null): string {
+  if (!s) return "";
+  return s.split(/[·•|]/).map((p) => p.trim())
+    .filter((p) => p && !/\b\w*_id\s*:/i.test(p))
+    .join(" · ");
+}
 const STATUS: Record<string, { dot: string; text: string; label: string }> = {
   done: { dot: "bg-green-500", text: "text-green-600", label: "Done" },
   running: { dot: "bg-amber-500 animate-pulse", text: "text-amber-600", label: "Running" },
@@ -70,30 +78,30 @@ export default function LivePage() {
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <Section title="Agent pipeline" desc="Each agent's latest run">
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {state.pipeline.map((a) => {
                 const st = STATUS[a.status] || STATUS.idle;
                 return (
-                  <div key={a.agent} className="rounded-xl border border-edge bg-field/40 p-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-lg">{a.icon}</span>
-                      <span className="font-semibold text-slate-900">{a.label}</span>
-                      <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${st.text}`}>
-                        <span className={`h-2 w-2 rounded-full ${st.dot}`} /> {st.label}
+                  <div key={a.agent} className="rounded-lg border border-edge bg-field/40 px-3.5 py-3">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-base">{a.icon}</span>
+                      <span className="text-sm font-semibold text-slate-900">{a.label}</span>
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${st.text}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} /> {st.label}
                       </span>
-                      <span className="ml-auto text-xs text-slate-400">{rel(a.last_run)}{a.duration_ms != null ? ` · ${dur(a.duration_ms)}` : ""}</span>
+                      <span className="ml-auto text-[11px] text-slate-400">{rel(a.last_run)}{a.duration_ms != null ? ` · ${dur(a.duration_ms)}` : ""}</span>
                     </div>
                     {a.steps?.length > 0 && (
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <div className="mt-2 flex flex-wrap items-center gap-1">
                         {a.steps.map((s, i) => (
-                          <span key={i} className="flex items-center gap-1.5">
-                            <span className="rounded-md bg-white px-2 py-0.5 text-xs text-slate-600 ring-1 ring-inset ring-slate-200">{s}</span>
+                          <span key={i} className="flex items-center gap-1">
+                            <span className="rounded bg-white px-1.5 py-0.5 text-[11px] text-slate-600 ring-1 ring-inset ring-slate-200">{s}</span>
                             {i < a.steps.length - 1 && <span className="text-slate-300">→</span>}
                           </span>
                         ))}
                       </div>
                     )}
-                    {a.summary && <p className="mt-2 text-xs text-slate-500">{a.summary}</p>}
+                    {clean(a.summary) && <p className="mt-2 text-xs leading-relaxed text-slate-500">{clean(a.summary)}</p>}
                   </div>
                 );
               })}
@@ -103,8 +111,8 @@ export default function LivePage() {
 
         <Section title="Activity" desc="Recent agent events">
           {state.events.length === 0 ? <EmptyState title="No activity yet" /> : (
-            <ol className="space-y-3">
-              {state.events.slice(0, 20).map((e) => {
+            <ol className="space-y-2.5">
+              {state.events.slice(0, 12).map((e) => {
                 const st = STATUS[e.status] || STATUS.idle;
                 return (
                   <li key={e.id} className="flex gap-2.5">
@@ -114,7 +122,7 @@ export default function LivePage() {
                         <span className="text-sm font-medium text-slate-800">{e.icon} {e.label}</span>
                         <span className="text-[11px] text-slate-400">{rel(e.ts)}</span>
                       </div>
-                      <p className="truncate text-xs text-slate-500">{e.result || e.action}{e.reason ? ` — ${e.reason}` : ""}</p>
+                      <p className="truncate text-xs text-slate-500">{clean(e.result) || e.action}{e.reason ? ` — ${e.reason}` : ""}</p>
                     </div>
                   </li>
                 );

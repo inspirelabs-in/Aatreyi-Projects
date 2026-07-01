@@ -9,10 +9,13 @@ original affiliate URL is used, so a post is never broken.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Iterable
 
 from config import settings
+
+log = logging.getLogger("shortener")
 
 # Short-lived cache so the same product link isn't shortened twice in a run.
 _CACHE: dict[str, str] = {}
@@ -42,8 +45,11 @@ async def shorten_url(url: str) -> str:
                     _CACHE[url] = short
                     _CACHE_TS[url] = now
                     return short
-    except Exception:
-        pass
+                log.warning("shortener: 2xx but no shortUrl in response: %s", r.text[:200])
+            else:
+                log.warning("shortener: HTTP %s from %s: %s", r.status_code, api, r.text[:200])
+    except Exception as e:
+        log.warning("shortener: request to %s failed: %s: %s", api, type(e).__name__, e)
     return url
 
 
