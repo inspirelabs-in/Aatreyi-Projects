@@ -21,7 +21,7 @@ from sqlalchemy import delete, select
 from config import settings
 from db.base import AsyncSessionLocal
 from db.models import Competitor, CompetitorPost, DiscoverySource
-from tools.channel_dna import CATEGORY_KEYWORDS
+from tools.channel_dna import CATEGORY_KEYWORDS, _CATEGORY_PATTERNS
 from tools.llm import chat_complete
 
 # Ranking weights — topic/content similarity first, then engagement signals
@@ -167,13 +167,19 @@ def channel_keyword_set(category: str | None, sub_category: str | None, topics) 
 
 
 def extract_themes(posts: list[dict]) -> list[str]:
-    """Detect category themes present in a competitor's posts (for relevance)."""
+    """Detect category themes present in a competitor's posts (for relevance).
+
+    Uses whole-word matching (not substring str.count) with a minimum hit floor:
+    a single incidental mention of "ai"/"money"/"health" must not tag a deals
+    competitor as tech/finance/health — which then surfaced as bogus "content
+    gaps" ("how can a deals channel post about tech?"). A theme only counts when
+    the keyword appears >=2 times as a standalone word."""
     corpus = " ".join((p.get("text") or "") for p in posts).lower()
     hits = {
-        cat: sum(corpus.count(kw) for kw in kws)
-        for cat, kws in CATEGORY_KEYWORDS.items()
+        cat: sum(len(pat.findall(corpus)) for pat in pats)
+        for cat, pats in _CATEGORY_PATTERNS.items()
     }
-    return [cat for cat, c in sorted(hits.items(), key=lambda kv: kv[1], reverse=True) if c > 0][:5]
+    return [cat for cat, c in sorted(hits.items(), key=lambda kv: kv[1], reverse=True) if c >= 2][:5]
 
 
 # ── Competitor metrics (pure; formulae.md §6 ER) ─────────────────────────────

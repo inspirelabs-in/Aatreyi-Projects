@@ -36,7 +36,17 @@ W = {"audience": 0.35, "topic": 0.25, "language_region": 0.20,
      "format": 0.10, "frequency": 0.05, "size": 0.05}
 
 _STOP = {"the", "and", "for", "with", "you", "your", "this", "that", "are", "from",
-         "now", "get", "all", "new", "out", "off", "https", "http", "www", "com"}
+         "now", "get", "all", "new", "out", "off", "https", "http", "www", "com",
+         # generic filler / CTA noise that is never an "emerging trend"
+         "here", "read", "more", "click", "tap", "link", "use", "only", "today",
+         "just", "grab", "shop", "buy", "order", "check", "want", "will", "have",
+         "was", "not", "but", "our", "them", "they", "one", "two", "top", "best",
+         # deal-domain words that are ALWAYS present on a deals channel — constant,
+         # not a trend (their presence tells us nothing new)
+         "deal", "deals", "price", "prices", "offer", "offers", "discount",
+         "discounts", "sale", "code", "coupon", "coupons", "cashback", "free",
+         "flat", "upto", "onwards", "save", "lowest", "amazon", "flipkart",
+         "myntra", "ajio", "meesho", "amzn", "flpkrt", "rupees", "rupee"}
 
 try:
     from tools.strategy import LOCAL_TZ
@@ -251,7 +261,9 @@ def build_channel_intelligence(competitors: list[dict], my: dict) -> dict[str, A
             for w in re.findall(r"[a-z][a-z0-9]{3,}", (p.get("text") or "").lower()):
                 if w not in _STOP:
                     trend_words[w] += 1
-    gaps = [t for t, _ in comp_themes.most_common() if t not in my_topics][:6]
+    # A real gap = a theme covered by MULTIPLE competitors that we don't touch —
+    # not a one-off theme from a single channel's noise.
+    gaps = [t for t, cnt in comp_themes.most_common() if cnt >= 2 and t not in my_topics][:6]
     best_media = {k: round(v / max(len(competitors), 1)) for k, v in media_acc.most_common(5)}
     opportunities: list[str] = []
     if gaps:
@@ -266,7 +278,9 @@ def build_channel_intelligence(competitors: list[dict], my: dict) -> dict[str, A
         opportunities.append(f"Most common competitor CTAs: {', '.join(p for p, _ in cta.most_common(3))}.")
     return {
         "content_gaps": gaps,
-        "emerging_trends": [w for w, _ in trend_words.most_common(8)],
+        # Only surface words that recur (>=3x) after filtering domain/noise words —
+        # otherwise return nothing rather than junk like "here"/"amzn"/"read".
+        "emerging_trends": [w for w, cnt in trend_words.most_common(8) if cnt >= 3],
         "best_schedule": [h for h, _ in hours.most_common(4)],
         "best_media_mix": best_media,
         "best_cta": [p for p, _ in cta.most_common(4)],
