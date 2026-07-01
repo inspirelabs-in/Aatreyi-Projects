@@ -613,8 +613,15 @@ def compute_strategy(
     # planner can auto-optimize slot categories/priority from it.
     try:
         from tools.competitor_intel import build_channel_intelligence
+        from tools.competitor import extract_themes
+        # Build my_topics in the SAME taxonomy as competitor themes, else a deals
+        # channel gets told "deals/shopping" are content GAPS it doesn't cover.
+        # Classify our own posts (extract_themes) + include our category labels.
+        own = [str(t).lower() for t in (dna.get("top_topics") or [])]
+        own += extract_themes(dna.get("sample_posts") or [])
+        own += [str(t).lower() for t in (dna.get("category"), dna.get("sub_category")) if t]
         competitor_intelligence = build_channel_intelligence(
-            competitors, {"top_topics": [str(t).lower() for t in (dna.get("top_topics") or [])]}
+            competitors, {"top_topics": own}
         )
     except Exception:
         competitor_intelligence = {}
