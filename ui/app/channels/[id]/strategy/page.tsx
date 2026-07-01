@@ -138,45 +138,6 @@ export default function StrategyPage() {
         )}
       </Collapsible>
 
-      {((data.growth_recommendations || []).length > 0 || (data.retention_recommendations || []).length > 0) && (
-        <Collapsible title="📈 Recommendation engine — growth &amp; retention">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800">
-                <Badge tone="green">Growth</Badge> Grow subscribers &amp; reach
-              </div>
-              <ul className="space-y-2">
-                {(data.growth_recommendations || []).map((r, i) => (
-                  <li key={i} className="rounded-lg border border-edge bg-white p-3">
-                    <p className="text-sm font-medium text-slate-800">{r.recommendation}</p>
-                    {r.why && <p className="mt-1 text-xs text-slate-500">{r.why}</p>}
-                  </li>
-                ))}
-                {(data.growth_recommendations || []).length === 0 && (
-                  <li className="text-sm text-slate-400">No growth recommendations yet.</li>
-                )}
-              </ul>
-            </div>
-            <div>
-              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800">
-                <Badge tone="blue">Retention</Badge> Keep members engaged
-              </div>
-              <ul className="space-y-2">
-                {(data.retention_recommendations || []).map((r, i) => (
-                  <li key={i} className="rounded-lg border border-edge bg-white p-3">
-                    <p className="text-sm font-medium text-slate-800">{r.recommendation}</p>
-                    {r.why && <p className="mt-1 text-xs text-slate-500">{r.why}</p>}
-                  </li>
-                ))}
-                {(data.retention_recommendations || []).length === 0 && (
-                  <li className="text-sm text-slate-400">No retention recommendations yet.</li>
-                )}
-              </ul>
-            </div>
-          </div>
-        </Collapsible>
-      )}
-
       {data.competitor_intelligence && (
         ((data.competitor_intelligence.opportunities || []).length > 0 ||
          (data.competitor_intelligence.content_gaps || []).length > 0 ||
@@ -288,16 +249,17 @@ export default function StrategyPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase text-slate-500">
-              <tr><th className="py-2">Date</th><th>Time</th><th>Format</th><th>Topic</th><th>Status</th></tr>
+              <tr><th className="py-2 pr-3">Date</th><th className="pr-3">Time</th><th className="pr-3">Format</th><th className="pr-3">Topic</th><th className="pr-3">Status</th><th>Reason</th></tr>
             </thead>
             <tbody>
               {data.tasks.map((t) => (
-                <tr key={t.task_id} className="border-t border-edge">
-                  <td className="py-2">{t.date}</td>
-                  <td>{t.time?.slice(0, 5)}</td>
-                  <td><Badge>{t.format}</Badge></td>
-                  <td>{t.kind ? <><Badge tone="blue">{t.kind}</Badge> {t.topic}</> : t.topic}</td>
-                  <td><Badge tone="amber">{t.status}</Badge></td>
+                <tr key={t.task_id} className="border-t border-edge align-top">
+                  <td className="py-2 pr-3 whitespace-nowrap">{t.date}</td>
+                  <td className="pr-3 whitespace-nowrap">{t.time?.slice(0, 5)}</td>
+                  <td className="pr-3"><Badge>{t.format}</Badge></td>
+                  <td className="pr-3">{t.kind ? <><Badge tone="blue">{t.kind}</Badge> {t.topic}</> : t.topic}</td>
+                  <td className="pr-3"><Badge tone="amber">{t.status}</Badge></td>
+                  <td className="text-xs text-slate-500">{t.rationale}</td>
                 </tr>
               ))}
             </tbody>

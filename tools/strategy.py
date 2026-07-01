@@ -17,6 +17,7 @@ from config import settings
 from db.base import AsyncSessionLocal
 from tools.analytics import classify_churn_risk
 from tools.retention import build_retention_triggers, fatigue_score
+from tools.slot_reasons import _apply_slot_reasons
 from tools.strategy_profiles import DENSE, infer_strategy_profile
 from db.models import (
     AnalyticsSnapshot,
@@ -681,7 +682,6 @@ def compute_strategy(
     deals_plan: list[dict] = []
     if is_dense:
         tasks: list[dict] = _build_dense_plan(profile, primary_topics, ps, competitor_intelligence)
-        deals_plan = _deals_plan_display(tasks)
     else:
         tasks = _build_curated_plan(profile, primary_topics, content_mix, slot_hours, ps, pe)
 
@@ -721,6 +721,23 @@ def compute_strategy(
     if recycle_candidates and not is_dense:
         _inject_recycle_slots(tasks, recycle_candidates, slots_per_day)
     fatigue = fatigue_score(tasks)
+
+    # ── Bake growth+retention optimizations into the schedule: stamp EVERY slot
+    #    with a concise, specific reason (competitor peaks, category/marketplace
+    #    performance, trending topics, media choice, diversity, niche timing). ──
+    _trending = {str(c).lower() for c in
+                 (competitor_intelligence.get("trending_categories")
+                  or competitor_intelligence.get("emerging_trends") or [])}
+    reason_ctx = {
+        "family": profile.get("family"),
+        "niche": category or "",
+        "peak_hours": set((profile.get("timing") or {}).get("peak_hours") or slot_hours),
+        "trending": _trending,
+        "cats_sample": primary_topics,
+    }
+    _apply_slot_reasons(tasks, reason_ctx)
+    if is_dense:
+        deals_plan = _deals_plan_display(tasks)
 
     if is_dense:
         _rules = profile["execution_rules"]

@@ -284,22 +284,35 @@ async def llm_enrich_strategy(
             ci = 0
             for task in tasks:
                 if (task.get("kind") or "").lower() == "single":
-                    cat = ranked[ci % len(ranked)][:128]
+                    task["topic"] = ranked[ci % len(ranked)][:128]
                     ci += 1
-                    old = task.get("topic")
-                    task["topic"] = cat
-                    # keep the rationale category label in sync when it named the old one
-                    if old and task.get("rationale") and old in task["rationale"]:
-                        task["rationale"] = task["rationale"].replace(old, cat, 1)
-            # refresh the UI plan projection from the (now LLM-ranked) slots
-            try:
-                from tools.strategy import _deals_plan_display
-                payload["deals_plan"] = _deals_plan_display(tasks)
-            except Exception:
-                pass
         else:
             for i, task in enumerate(tasks):
                 task["topic"] = ranked[i % len(ranked)][:128]
+
+        # Regenerate every slot's reason from its FINAL (LLM-ranked) topic so the
+        # per-slot rationale always matches the assigned category — and refresh the
+        # deals-plan projection for the UI.
+        try:
+            from tools.slot_reasons import _apply_slot_reasons
+            prof = payload.get("strategy_profile") or {}
+            comp_intel = payload.get("competitor_intelligence") or {}
+            trending = {str(c).lower() for c in
+                        (comp_intel.get("trending_categories")
+                         or comp_intel.get("emerging_trends") or [])}
+            ctx = {
+                "family": prof.get("family") or ("deals" if is_deals else "content"),
+                "niche": category or "",
+                "peak_hours": set((prof.get("timing") or {}).get("peak_hours") or []),
+                "trending": trending,
+                "cats_sample": ranked,
+            }
+            _apply_slot_reasons(tasks, ctx)
+            if is_deals:
+                from tools.strategy import _deals_plan_display
+                payload["deals_plan"] = _deals_plan_display(tasks)
+        except Exception:
+            pass
 
         # keep content_mix consistent with the actual slot formats
         counts: dict[str, float] = {}

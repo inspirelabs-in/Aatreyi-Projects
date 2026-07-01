@@ -103,7 +103,7 @@ export interface Strategy {
   retention_recommendations?: { recommendation: string; why?: string }[] | null;
   period_start: string | null;
   period_end: string | null;
-  tasks: { task_id: string; date: string | null; time: string | null; format: string | null; topic: string | null; kind?: string | null; status: string | null }[];
+  tasks: { task_id: string; date: string | null; time: string | null; scrape_at?: string | null; format: string | null; topic: string | null; kind?: string | null; marketplace?: string | null; media_type?: string | null; priority?: number | null; rationale?: string | null; status: string | null }[];
 }
 
 export interface AgentEvent {
