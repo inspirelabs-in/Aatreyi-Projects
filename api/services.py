@@ -201,9 +201,14 @@ async def get_strategy(session: AsyncSession, channel_id: str) -> dict | None:
                 "task_id": str(t.id),
                 "date": t.scheduled_date.isoformat() if t.scheduled_date else None,
                 "time": t.scheduled_time.isoformat() if t.scheduled_time else None,
+                "scrape_at": t.scrape_at.isoformat() if t.scrape_at else None,
                 "format": t.format.value if t.format else None,
                 "topic": t.topic,
                 "kind": t.kind,
+                "marketplace": t.marketplace,
+                "media_type": t.media_type,
+                "priority": t.priority,
+                "rationale": t.rationale,
                 "status": t.status.value if t.status else None,
             }
             for t in tasks

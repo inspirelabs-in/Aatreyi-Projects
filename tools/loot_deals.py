@@ -127,16 +127,23 @@ def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
     return {"post_text": text, "post_format": "text", "parse_mode": "HTML", "used": used}
 
 
-def build_single_deal_post(deals: list[dict], platform: str, seen: list[frozenset]) -> dict | None:
+def build_single_deal_post(
+    deals: list[dict], platform: str, seen: list[frozenset], prefer_ranked: bool = False
+) -> dict | None:
     """Pick the best fresh single-product deal for ``platform`` and compose a
-    photo post with an affiliate button. None if no fresh deal."""
+    photo post with an affiliate button. None if no fresh deal.
+
+    When ``prefer_ranked`` is set, ``deals`` is assumed already sorted best-first
+    (by the executor's ranker: discount + engagement + trend + stock) and the
+    incoming order is honoured instead of re-sorting by raw discount."""
     cands = [d for d in deals
              if (d.get("platform") == platform)
              and (d.get("affiliate_url") or d.get("product_url"))
              and not is_title_dupe(d.get("title"), seen)]
     if not cands:
         return None
-    cands.sort(key=lambda d: d.get("discount_pct") or 0, reverse=True)
+    if not prefer_ranked:
+        cands.sort(key=lambda d: d.get("discount_pct") or 0, reverse=True)
     d = cands[0]
     title = " ".join((d.get("title") or "").split())
     pct = d.get("discount_pct")

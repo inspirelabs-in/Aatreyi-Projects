@@ -227,19 +227,27 @@ export default function StrategyPage() {
       )}
 
       {(data.deals_plan || []).length > 0 && (
-        <Collapsible title={`📅 Daily posting plan — ${(data.deals_plan || []).length} deals (loot + single), 9 AM–12 AM`}>
+        <Collapsible title={`📅 Execution plan — ${(data.deals_plan || []).length} slots (loot + single), scraped just-in-time & auto-published`}>
+          <p className="mb-3 text-xs text-slate-500">
+            The Strategy Agent only plans these slots (when · category · marketplace · loot/single · media · why).
+            The Scheduler scrapes each slot ~{"15–20"} min before its time, ranks fresh deals (discount + engagement +
+            stock + competitor trends), writes one caption with one link, and auto-publishes at the post time.
+          </p>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs uppercase text-slate-500">
-                <tr><th className="py-2 pr-3">Time</th><th className="pr-3">Type</th><th className="pr-3">Category</th><th className="pr-3">Format</th><th>Why (reason)</th></tr>
+                <tr><th className="py-2 pr-3">Scrape</th><th className="pr-3">Post</th><th className="pr-3">Type</th><th className="pr-3">Category</th><th className="pr-3">Marketplace</th><th className="pr-3">Media</th><th className="pr-3">Prio</th><th>Why (reason)</th></tr>
               </thead>
               <tbody>
                 {(data.deals_plan || []).map((p, i) => (
                   <tr key={i} className="border-t border-edge align-top">
-                    <td className="py-2 pr-3 whitespace-nowrap font-medium text-slate-800">{p.time}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap text-xs text-slate-500">{p.scrape_at}</td>
+                    <td className="pr-3 whitespace-nowrap font-medium text-slate-800">{p.time}</td>
                     <td className="pr-3"><Badge tone={p.type === "loot" ? "amber" : "blue"}>{p.type}</Badge></td>
-                    <td className="pr-3 text-slate-700">{p.category}{p.platform ? ` · ${p.platform}` : ""}</td>
-                    <td className="pr-3"><Badge tone="slate">{p.format}</Badge></td>
+                    <td className="pr-3 text-slate-700">{p.category}</td>
+                    <td className="pr-3 text-slate-700">{p.platform || "—"}</td>
+                    <td className="pr-3"><Badge tone="slate">{p.format === "photo" ? "photo" : "links"}</Badge></td>
+                    <td className="pr-3 text-slate-500">{p.priority ?? "—"}</td>
                     <td className="text-xs text-slate-500">{p.reason}</td>
                   </tr>
                 ))}

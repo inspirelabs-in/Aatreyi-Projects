@@ -167,7 +167,10 @@ async def test_generate_link_embeds_url(monkeypatch):
     item = {"title": "t", "body_text": "b", "external_url": "http://news/article"}
     out = await generate_post(item, {"topic": "ai", "format": "link"}, {})
     assert out["format"] == "link"
-    assert "http://news/article" in out["post_text"]
+    # One-link design: the URL is carried ONLY by the clickable button (link_url),
+    # never inlined in the body (which would double-link the post).
+    assert out["link_url"] == "http://news/article"
+    assert "http://news/article" not in (out["post_text"] or "")
 
 
 @pytest.mark.asyncio

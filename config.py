@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     # Discount policy: prefer >= PREFERRED%, fall back no lower than MIN%.
     DEAL_PREFERRED_DISCOUNT: int = Field(default=80)
     DEAL_MIN_DISCOUNT: int = Field(default=65)
+    # Sanity cap: discounts above this are treated as scrape errors (mis-parsed
+    # original price) and dropped by the ranker. 95% keeps genuine loot deals.
+    DEAL_MAX_DISCOUNT: int = Field(default=95)
     # Platforms to scrape and how many deals per category to keep.
     # Ajio is wired (scrape_ajio + ajio_kw) but Akamai-blocked, so it's OFF by
     # default — add "Ajio" here once an affiliate feed / anti-bot fetch is set up.

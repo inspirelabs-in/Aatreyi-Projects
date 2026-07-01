@@ -436,7 +436,11 @@ async def get_fresh_deals(
     platforms = platforms or [s.strip() for s in (settings.DEAL_PLATFORMS or "Amazon,Flipkart,Ajio").split(",") if s.strip()]
     pref, floor = settings.DEAL_PREFERRED_DISCOUNT, settings.DEAL_MIN_DISCOUNT
 
-    cache_key = f"{','.join(sorted(platforms))}|{max_per_category}|{pref}|{floor}"
+    # Cache key MUST include the category set — per-slot JIT scrapes pass different
+    # categories with the same platforms, and omitting them would return another
+    # slot's (wrong-category) cached deals.
+    cat_sig = ",".join(sorted(c.get("category", "") for c in categories)) if categories else "ALL"
+    cache_key = f"{','.join(sorted(platforms))}|{cat_sig}|{max_per_category}|{pref}|{floor}"
     if (_DEAL_CACHE["deals"] is not None and _DEAL_CACHE["key"] == cache_key
             and (time.time() - _DEAL_CACHE["ts"]) < _DEAL_CACHE_TTL_SEC):
         return _DEAL_CACHE["deals"]

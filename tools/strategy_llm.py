@@ -274,18 +274,32 @@ async def llm_enrich_strategy(
             payload["retention_recommendations"] = rr
         payload["primary_topics"] = ranked[:8]
 
-        # ── spread categories across EVERY slot (round-robin → variety, favourites
+        # ── spread categories across slots (round-robin → variety, favourites
         #    first). No slot keeps a rule-based/DNA topic, so nothing hallucinated. ──
-        for i, task in enumerate(tasks):
-            task["topic"] = ranked[i % len(ranked)][:128]
-            # Deals are broadcast: force photo/link on every slot (incl. any
-            # retention/recycle slots that the rule engine produced).
-            if is_deals:
-                f = task.get("format")
-                f = _FORMAT_MAP.get((f or "").lower(), f)
-                if f not in _DEALS_FORMATS or f not in _TASK_FORMATS:
-                    # alternate photo/link by index for visual variety
-                    task["format"] = "photo" if i % 4 != 2 else "link"
+        if is_deals:
+            # Deals slots are an EXECUTION PLAN: loot slots aggregate many categories
+            # (topic "Multiple", no image) and single slots target one category with
+            # a photo. Only re-assign categories to SINGLE slots — never touch loot
+            # slots or the execution fields (kind/format/media/marketplace/scrape_at).
+            ci = 0
+            for task in tasks:
+                if (task.get("kind") or "").lower() == "single":
+                    cat = ranked[ci % len(ranked)][:128]
+                    ci += 1
+                    old = task.get("topic")
+                    task["topic"] = cat
+                    # keep the rationale category label in sync when it named the old one
+                    if old and task.get("rationale") and old in task["rationale"]:
+                        task["rationale"] = task["rationale"].replace(old, cat, 1)
+            # refresh the UI plan projection from the (now LLM-ranked) slots
+            try:
+                from tools.strategy import _deals_plan_display
+                payload["deals_plan"] = _deals_plan_display(tasks)
+            except Exception:
+                pass
+        else:
+            for i, task in enumerate(tasks):
+                task["topic"] = ranked[i % len(ranked)][:128]
 
         # keep content_mix consistent with the actual slot formats
         counts: dict[str, float] = {}

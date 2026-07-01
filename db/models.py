@@ -397,7 +397,14 @@ class StrategyTask(Base):
     )
     topic: Mapped[str | None] = mapped_column(String(128))
     # Phase 2: habit-loop trigger kind (series / cliffhanger / weekly / challenge / reengage)
+    # Deals execution-planner: kind = "loot" | "single"
     kind: Mapped[str | None] = mapped_column(String(32))
+    # ── Execution-planner slot fields (Strategy Agent emits, Scheduler executes) ──
+    marketplace: Mapped[str | None] = mapped_column(String(24))   # Amazon / Flipkart / None (loot mix)
+    media_type: Mapped[str | None] = mapped_column(String(16))    # photo / none
+    scrape_at: Mapped[time | None] = mapped_column(Time)          # when the executor scrapes (publish − lead)
+    priority: Mapped[int | None] = mapped_column(Integer)         # execution priority (higher = more important)
+    rationale: Mapped[str | None] = mapped_column(Text)           # why this slot (category/time/media reason)
     content_item_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("content_items.id", ondelete="SET NULL")
     )

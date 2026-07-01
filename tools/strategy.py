@@ -407,47 +407,125 @@ def build_diagnosis(avg_er, subscriber_delta, churn_signal, bench, tactics) -> s
     return ("; ".join(parts) + "." + tail) if parts else "Insufficient data for a full diagnosis yet."
 
 
-def _build_deals_plan(categories: list[str]) -> list[dict[str, Any]]:
-    """Concrete GrabOn day-plan: LOOT + SINGLE posts, each with a time, format,
-    platform and a REASON (why this category / format / time). This is what the
-    dense auto-poster runs — shown so the strategy is specific, not vague."""
+def _minute_to_hhmm(m: int) -> str:
+    return f"{(m // 60) % 24:02d}:{m % 60:02d}"
+
+
+def _diverse_category(cats: list[str], used_recently: list[str], ci: int) -> tuple[str, int]:
+    """Pick the next category round-robin but skip one that appeared in the last
+    `window` slots (avoid back-to-back category repetition). Returns (cat, next_ci)."""
+    if not cats:
+        return "Electronics", ci
+    window = min(len(cats) - 1, 3)
+    for step in range(len(cats)):
+        cand = cats[(ci + step) % len(cats)]
+        if window == 0 or cand not in used_recently[-window:]:
+            return cand, ci + step + 1
+    return cats[ci % len(cats)], ci + 1
+
+
+def _build_deals_plan(
+    categories: list[str],
+    period_date: date,
+    competitor_intelligence: dict | None = None,
+    lead_minutes: int = 20,
+) -> list[dict[str, Any]]:
+    """EXECUTION PLAN for GrabOn: a list of executable slots (StrategyTask shape).
+
+    The Strategy Agent is a *planner* — it only decides WHEN to post, WHAT category,
+    WHICH marketplace, loot vs single, media type, when to scrape, priority and WHY.
+    It never scrapes products or writes captions; the Scheduler does that per slot.
+
+    Diversity: loot/single interleaved, marketplaces balanced (15A/10F), categories
+    round-robin with no back-to-back repeat, media balanced (single=photo, loot=none).
+    Auto-optimization: competitor best-hours bias slot priority and category order.
+    """
     n_loot = settings.GRABON_LOOT_PER_DAY
     n_single = settings.GRABON_SINGLE_PER_DAY
     total = n_loot + n_single
     start_min = settings.GRABON_POST_START_HOUR * 60
     end_min = (settings.GRABON_POST_END_HOUR + 1) * 60
     step = max(1, (end_min - start_min) // max(total, 1))
+    date_iso = period_date.isoformat()
+
     # single-product platform sequence: 15 Amazon / 10 Flipkart, evenly interleaved
     a, f = settings.GRABON_SINGLE_AMAZON, settings.GRABON_SINGLE_FLIPKART
     seq = [((i + 0.5) / max(a, 1), "Amazon") for i in range(a)]
     seq += [((i + 0.5) / max(f, 1), "Flipkart") for i in range(f)]
     seq.sort()
     singles = [p for _, p in seq] or ["Amazon"]
-    cats = categories or ["Electronics"]
+
+    # Auto-optimization: order categories by competitor demand where known so the
+    # top-performing categories land in more (and higher-priority) slots. Every
+    # candidate is validated against the real DEAL_CATEGORIES set so junk n-grams
+    # (e.g. "price", "amzn", "deal") from competitor text mining never leak into a
+    # slot's scrape assignment.
+    from tools.deal_scrapers import DEAL_CATEGORIES, resolve_deal_categories
+
+    intel = competitor_intelligence or {}
+    trend_cats = [str(c) for c in (intel.get("trending_categories") or intel.get("emerging_trends") or [])]
+    valid: list[str] = []
+    for c in (trend_cats + list(categories or [])):
+        match = resolve_deal_categories(c)
+        if match and match[0]["category"] not in valid:
+            valid.append(match[0]["category"])
+    _DEFAULT_CATS = ["Electronics", "Fashion Women", "Headphones", "Watches",
+                     "Beauty", "Home & Kitchen", "Footwear", "Mobiles"]
+    cats = valid or _DEFAULT_CATS
+    # Peak hours from competitor intelligence (local hours) → boost slot priority.
+    peak_hours = set(int(h) for h in (intel.get("best_hours") or []) if str(h).isdigit()) or {13, 20, 21}
 
     plan: list[dict[str, Any]] = []
     loot_done = si = ci = 0
+    used: list[str] = []
     for i in range(total):
         m = start_min + i * step
-        t = f"{(m // 60) % 24:02d}:{m % 60:02d}"
+        t = _minute_to_hhmm(m)
+        scrape_min = (m - lead_minutes) % (24 * 60)
+        scrape_at = _minute_to_hhmm(scrape_min)
+        hour = (m // 60) % 24
+        base_priority = 2 if hour in peak_hours else 1
         if i % 2 == 0 and loot_done < n_loot:
             loot_done += 1
             plan.append({
-                "time": t, "type": "loot", "category": "Multiple", "format": "link", "platform": None,
-                "reason": (f"Loot compilation — bundles today's biggest-discount deals across your top "
-                           f"categories ({', '.join(cats[:3])}); link format fits many products in one post; "
-                           f"spaced through the day for steady reach."),
+                "scheduled_date": date_iso, "scheduled_time": t, "scrape_at": scrape_at,
+                "kind": "loot", "format": "link", "topic": "Multiple",
+                "marketplace": None, "media_type": "none",
+                "priority": base_priority + 2,  # loot aggregates → high value
+                "rationale": (
+                    f"Loot compilation at {t}: aggregate the biggest-discount deals across "
+                    f"{', '.join(cats[:3])} (no image, clickable links). Scrape at {scrape_at} "
+                    f"(T−{lead_minutes}m)."
+                    + (f" {hour:02d}:00 is a competitor peak hour → prioritised." if hour in peak_hours else "")
+                ),
             })
         else:
             plat = singles[si % len(singles)]; si += 1
-            cat = cats[ci % len(cats)]; ci += 1
+            cat, ci = _diverse_category(cats, used, ci)
+            used.append(cat)
             plan.append({
-                "time": t, "type": "single", "category": cat, "format": "photo", "platform": plat,
-                "reason": (f"{cat} — a top audience-engagement category (from competitor winners + your own "
-                           f"high-ER posts). Single product as a photo from {plat}; photos convert best for "
-                           f"one-product deals."),
+                "scheduled_date": date_iso, "scheduled_time": t, "scrape_at": scrape_at,
+                "kind": "single", "format": "photo", "topic": cat,
+                "marketplace": plat, "media_type": "photo",
+                "priority": base_priority + 1,
+                "rationale": (
+                    f"{cat} single-product post at {t} from {plat} (photo — best for one product). "
+                    f"Category by audience engagement + competitor demand; scrape at {scrape_at} "
+                    f"(T−{lead_minutes}m)."
+                    + (f" {hour:02d}:00 is a competitor peak hour → prioritised." if hour in peak_hours else "")
+                ),
             })
     return plan
+
+
+def _deals_plan_display(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project executable slots to the UI table shape (Time·Type·Category·Format·Why)."""
+    return [{
+        "time": s["scheduled_time"], "type": s["kind"], "category": s["topic"],
+        "format": s["format"], "platform": s.get("marketplace"),
+        "scrape_at": s.get("scrape_at"), "priority": s.get("priority"),
+        "reason": s.get("rationale"),
+    } for s in slots]
 
 
 # ── Core (pure) ──────────────────────────────────────────────────────────────
@@ -527,13 +605,27 @@ def compute_strategy(
     days = _DAYS_BY_TYPE.get(strategy_type, 7)
     pe = date.fromisoformat(period_end) if period_end else ps + timedelta(days=days - 1)
 
-    # DEALS (GrabOn): the concrete 50-post/day plan (loot + single, with reasons)
-    # IS the strategy — the dense auto-poster executes it, so we don't create the
-    # generic rule-based slots (which would look vague and double-post).
+    # Channel-level competitor intelligence (facts only: gaps, trends, best
+    # schedule/media-mix/CTA, opportunities). Computed up-front so the deals
+    # planner can auto-optimize slot categories/priority from it.
+    try:
+        from tools.competitor_intel import build_channel_intelligence
+        competitor_intelligence = build_channel_intelligence(
+            competitors, {"top_topics": [str(t).lower() for t in (dna.get("top_topics") or [])]}
+        )
+    except Exception:
+        competitor_intelligence = {}
+
+    # DEALS (GrabOn): the executable 50-slot/day plan (loot + single) IS the
+    # strategy. The Strategy Agent only PLANS these slots (when/what/where/why);
+    # the Scheduler scrapes + ranks + writes the caption per slot at scrape time.
     deals_plan: list[dict] = []
     if is_deals:
-        deals_plan = _build_deals_plan(primary_topics)
-        tasks: list[dict] = []
+        tasks: list[dict] = _build_deals_plan(
+            primary_topics, ps, competitor_intelligence,
+            lead_minutes=settings.CONTENT_GENERATION_LEAD_MIN,
+        )
+        deals_plan = _deals_plan_display(tasks)
     else:
         # build tasks: weighted formats round-robin, topics round-robin
         format_cycle = _weighted_format_cycle(content_mix)
@@ -630,16 +722,6 @@ def compute_strategy(
         ]
     diagnosis = build_diagnosis(avg_er, sub_delta, churn, bench_er, tactics)
     competitor_insights = _build_competitor_insights(competitors)
-    # Channel-level competitor intelligence (facts only: gaps, trends, best
-    # schedule/media-mix/CTA, opportunities), aggregated from the stored
-    # per-competitor analysis. Lazy import avoids a circular import.
-    try:
-        from tools.competitor_intel import build_channel_intelligence
-        competitor_intelligence = build_channel_intelligence(
-            competitors, {"top_topics": [str(t).lower() for t in (dna.get("top_topics") or [])]}
-        )
-    except Exception:
-        competitor_intelligence = {}
     return {
         "goal": goal,
         "diagnosis": diagnosis,
@@ -755,11 +837,27 @@ async def save_strategy(channel_id: str | uuid.UUID, strategy_payload: dict) -> 
         )
         session.add(strat)
         await session.flush()
+        # Deals slots are ephemeral, day-specific execution slots. When a new deals
+        # plan is saved, drop any still-pending deal slots from OLDER strategies so
+        # they don't accumulate across daily replans and double-fire the executor.
+        new_tasks = strategy_payload.get("tasks", [])
+        if any((t.get("kind") or "") in ("loot", "single") for t in new_tasks):
+            # A deals channel's plan is fully replaced each day, so drop ALL pending
+            # slots from older strategies (incl. legacy kind=None ones) — keep only
+            # this strategy's fresh slots so the executor never double-fires.
+            await session.execute(
+                delete(StrategyTask).where(
+                    StrategyTask.channel_id == cid,
+                    StrategyTask.strategy_id != strat.id,
+                    StrategyTask.status == TaskStatus.pending,
+                )
+            )
         count = 0
-        for t in strategy_payload.get("tasks", []):
+        for t in new_tasks:
             fmt = _FORMAT_MAP.get(t.get("format"), t.get("format"))
             if fmt not in _TASK_FORMATS:
                 fmt = "text"
+            scrape_at = t.get("scrape_at")
             session.add(
                 StrategyTask(
                     strategy_id=strat.id,
@@ -769,6 +867,11 @@ async def save_strategy(channel_id: str | uuid.UUID, strategy_payload: dict) -> 
                     format=fmt,
                     topic=t.get("topic"),
                     kind=t.get("kind"),
+                    marketplace=t.get("marketplace"),
+                    media_type=t.get("media_type"),
+                    scrape_at=time.fromisoformat(scrape_at) if scrape_at else None,
+                    priority=t.get("priority"),
+                    rationale=t.get("rationale"),
                 )
             )
             count += 1
@@ -885,12 +988,14 @@ async def update_cron_for_content_agent(
     return {"cron_jobs_created": created, "cron_jobs_updated": 0}
 
 
-# ── Due-slot helpers (used by the content-slot dispatcher) ───────────────────
+# ── Due-slot helpers (used by the content-slot dispatcher / executor) ────────
 async def get_due_tasks(lead_minutes: int = 30) -> list[dict[str, Any]]:
-    """Pending tasks whose slot is within the next `lead_minutes` (fire window).
+    """Pending tasks whose SCRAPE moment has arrived (executor should generate now).
 
-    Slots are stored in LOCAL_TZ (audience clock), so the fire window is computed
-    in that timezone too.
+    Deals slots carry an explicit `scrape_at` (publish − lead) — they fire once now
+    is past scrape_at but before the publish time. Non-deals slots fire when now is
+    within `lead_minutes` before the slot. Slots are stored in LOCAL_TZ (audience
+    clock). Returns the rich slot fields the executor needs to scrape + rank + build.
     """
     now = datetime.now(LOCAL_TZ)
     horizon = now + timedelta(minutes=lead_minutes)
@@ -909,9 +1014,26 @@ async def get_due_tasks(lead_minutes: int = 30) -> list[dict[str, Any]]:
         if not t.scheduled_time:
             continue
         slot_dt = datetime.combine(t.scheduled_date, t.scheduled_time, tzinfo=LOCAL_TZ)
-        if now <= slot_dt <= horizon:
-            due.append({"id": str(t.id), "channel_id": str(t.channel_id),
-                        "scheduled_time": t.scheduled_time.isoformat()})
+        if t.scrape_at is not None:
+            scrape_dt = datetime.combine(t.scheduled_date, t.scrape_at, tzinfo=LOCAL_TZ)
+            ready = scrape_dt <= now <= slot_dt
+        else:
+            ready = now <= slot_dt <= horizon
+        if ready:
+            due.append({
+                "id": str(t.id), "channel_id": str(t.channel_id),
+                "scheduled_date": t.scheduled_date.isoformat() if t.scheduled_date else None,
+                "scheduled_time": t.scheduled_time.isoformat(),
+                "scrape_at": t.scrape_at.isoformat() if t.scrape_at else None,
+                "kind": t.kind,
+                "format": t.format.value if t.format else None,
+                "topic": t.topic,
+                "marketplace": t.marketplace,
+                "media_type": t.media_type,
+                "priority": t.priority,
+            })
+    # Execute highest-priority slots first when several are due at once.
+    due.sort(key=lambda d: -(d.get("priority") or 0))
     return due
 
 
@@ -958,6 +1080,29 @@ async def get_pending_tasks_for_channel(
              "scheduled_date": t.scheduled_date.isoformat() if t.scheduled_date else None,
              "scheduled_time": t.scheduled_time.isoformat() if t.scheduled_time else None}
             for t in rows]
+
+
+async def get_deal_ranking_context(channel_id: str | uuid.UUID) -> dict[str, Any]:
+    """Ranking signals for the deal executor, from the channel's active strategy:
+    preferred categories (ordered by engagement/competitor demand) + the
+    competitor trending categories. Used to rank scraped deals per slot."""
+    cid = uuid.UUID(str(channel_id))
+    async with AsyncSessionLocal() as session:
+        s = (
+            await session.execute(
+                select(Strategy)
+                .where(Strategy.channel_id == cid, Strategy.status == StrategyStatus.active)
+                .order_by(Strategy.created_at.desc())
+            )
+        ).scalars().first()
+    if not s:
+        return {"preferred_categories": [], "trending_categories": []}
+    intel = (s.analysis or {}).get("competitor_intelligence") or {}
+    trending = intel.get("trending_categories") or intel.get("emerging_trends") or []
+    return {
+        "preferred_categories": list(s.primary_topics or []),
+        "trending_categories": [str(t) for t in trending],
+    }
 
 
 async def mark_task_generated(task_id: str | uuid.UUID, generated_post_id: str | None = None) -> None:

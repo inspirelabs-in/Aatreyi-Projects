@@ -29,7 +29,6 @@ from scheduler.jobs import (
     publish_due_posts,
     run_daily_cycle,
     run_daily_deals,
-    run_grabon_deals,
     run_monthly_audit,
     run_weekly_cycle,
 )
@@ -85,13 +84,8 @@ def build_scheduler() -> AsyncIOScheduler:
         IntervalTrigger(minutes=settings.SUBSCRIBER_POLL_INTERVAL_MIN),
         id="subscriber_poll",
     )
-    # GrabOn dense deal auto-poster: fires every N min; the job itself gates to
-    # 9 AM–12 AM and the daily quota (25 loot + 25 single, 15 Amazon/10 Flipkart).
-    scheduler.add_job(
-        run_grabon_deals,
-        IntervalTrigger(minutes=settings.GRABON_POST_INTERVAL_MIN),
-        id="grabon_deals",
-    )
+    # GrabOn deals are now slot-driven (planned by the Strategy Agent, executed by
+    # dispatch_due_content per slot), so the old interval auto-poster is gone.
     return scheduler
 
 

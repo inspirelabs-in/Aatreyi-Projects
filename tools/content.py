@@ -1115,6 +1115,11 @@ async def publish_post(
         button = InlineKeyboardMarkup([[InlineKeyboardButton((cta or "Open").strip()[:64], url=link_url)]])
     body = _compose_body(post_text or "", hashtags, (cta or "").strip(), has_button=button is not None)
 
+    # Loot compilations embed clickable <a href> links; auto-select HTML parse mode
+    # so they render as taps (the queue→publish path doesn't thread parse_mode).
+    if parse_mode is None and "<a href=" in (body or ""):
+        parse_mode = "HTML"
+
     try:
         if post_format == "poll" and poll_options and len(poll_options) >= 2:
             msg = await bot.send_poll(chat_id=chat, question=(post_text or "")[:300], options=poll_options[:10])
