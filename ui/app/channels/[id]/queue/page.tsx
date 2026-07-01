@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { QueueItem } from "@/lib/types";
-import { Badge, ErrorBox, InfoTooltip, Spinner } from "@/components/ui";
+import { Badge, EmptyState, ErrorBox, InfoTooltip, PageHeader, Spinner } from "@/components/ui";
 
 const PER_PAGE = 6;
 
@@ -106,13 +106,17 @@ export default function QueuePage() {
 
   if (error) return <ErrorBox error={error} />;
   if (!items) return <Spinner />;
-  if (items.length === 0) return <p className="text-slate-500">Queue is empty — no posts awaiting review.</p>;
 
   return (
     <div className="space-y-4">
+      <PageHeader title="Content" subtitle="Generated posts awaiting review — previewed exactly as they'll appear on Telegram." />
+      {items.length === 0 ? (
+        <EmptyState title="Queue is empty" hint="Posts appear here ~15–20 min before each slot." />
+      ) : (
+      <>
       <div className="flex items-center justify-between">
         <p className="text-xs text-slate-500">
-          {items.length} post{items.length === 1 ? "" : "s"} awaiting review · previewed exactly as they'll appear on Telegram.
+          {items.length} post{items.length === 1 ? "" : "s"} awaiting review.
         </p>
         <span className="text-xs text-slate-400">Page {page + 1} / {pageCount}</span>
       </div>
@@ -196,6 +200,8 @@ export default function QueuePage() {
           <button disabled={page >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             className="rounded-md border border-edge bg-panel px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-40">Next →</button>
         </div>
+      )}
+      </>
       )}
     </div>
   );

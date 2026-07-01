@@ -1,132 +1,89 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { Intelligence } from "@/lib/types";
-import { Badge, Card, Collapsible, ErrorBox, InfoTooltip, Spinner, Stat } from "@/components/ui";
-
-const PURPOSE_TONE: Record<string, "green" | "blue" | "amber" | "slate"> = {
-  growth: "green", retention: "blue", conversion: "amber", standard: "slate",
-};
+import { Badge, EmptyState, ErrorBox, PageHeader, Section, Spinner, Stat, Tabs } from "@/components/ui";
+import { BarBreakdown, Donut } from "@/components/charts";
 
 export default function IntelligencePage() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<Intelligence | null>(null);
   const [error, setError] = useState("");
+  const [tab, setTab] = useState("audience");
 
   useEffect(() => { api.intelligence(id).then(setData).catch((e) => setError(String(e))); }, [id]);
+
+  const intel = data?.intelligence;
+  const purpose = useMemo(
+    () => (intel?.purpose_mix ? Object.entries(intel.purpose_mix).map(([name, value]) => ({ name, value })) : []),
+    [intel],
+  );
+  const formats = (intel?.format_engagement || []).map((f) => ({ label: f.label, er: f.avg_er }));
+  const topics = (intel?.topic_engagement || []).map((t) => ({ label: t.label, er: t.avg_er }));
+  const cs = intel?.community_signal;
 
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Spinner />;
 
-  const it = data.intelligence || {};
-  const cs = it.community_signal;
-  const noData = !it.posts_analyzed;
-
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900">📡 Audience & Content Intelligence</h1>
-        <p className="text-sm text-slate-500">What the Analytics Agent learned from post signals — virality, stickiness, and the retention plan acting on it.</p>
-      </div>
+    <div>
+      <PageHeader title="Intelligence" subtitle="Audience behaviour and retention plan mined by the agents." />
+      <Tabs active={tab} onChange={setTab} tabs={[{ key: "audience", label: "Audience" }, { key: "retention", label: "Retention" }]} />
 
-      {noData ? (
-        <Card><p className="text-sm text-slate-500">No post intelligence yet — run the Analytics agent on a channel with recent posts.</p></Card>
-      ) : (
-        <>
-          <Collapsible title="Post purpose mix (virality layer)">
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(it.purpose_mix || {}).map(([k, v]) => (
-                <Badge key={k} tone={PURPOSE_TONE[k] || "slate"}>{k}: {v}</Badge>
-              ))}
-              <span className="ml-auto text-xs text-slate-400">{it.posts_analyzed} posts · {it.spikes ?? 0} break-out spike(s)</span>
-            </div>
-          </Collapsible>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <Collapsible title="Community signal">
-              {cs && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className={`h-2.5 w-2.5 rounded-full ${cs.silent ? "bg-red-500" : cs.state === "active" ? "bg-green-500" : "bg-amber-500"}`} />
-                    <span className="font-medium capitalize text-slate-800">{cs.silent ? "Silent channel" : cs.state}</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Stat
-                      label="Reaction density"
-                      value={`${cs.reaction_density}%`}
-                      info="% of viewers who reacted to posts (reactions ÷ views × 100). Higher = more emotional resonance."
-                    />
-                    <Stat
-                      label="Forward rate"
-                      value={`${cs.forward_rate}%`}
-                      info="% of viewers who forwarded posts to others. A strong virality signal — content people want to share."
-                    />
-                  </div>
-                  {cs.poll_participation != null && (
-                    <div className="flex items-center text-xs text-slate-500">
-                      Poll participation: {cs.poll_participation}%
-                      <InfoTooltip text="% of viewers who voted in poll posts. Indicates active audience engagement beyond passive reading." />
-                    </div>
-                  )}
-                </div>
-              )}
-            </Collapsible>
-
-            <Collapsible title="What engages best (format → ER)">
-              <ul className="space-y-1 text-sm">
-                {(it.format_engagement || []).map((f) => (
-                  <li key={f.label} className="flex justify-between">
-                    <span className="capitalize text-slate-700">{f.label}</span>
-                    <span className="text-slate-500">
-                      {f.avg_er}%
-                      <InfoTooltip text={`Avg engagement rate for ${f.label} posts — (reactions + forwards) ÷ views × 100`} />
-                      · {f.posts} posts
-                    </span>
-                  </li>
-                ))}
-                {(it.format_engagement || []).length === 0 && <li className="text-sm text-slate-400">—</li>}
-              </ul>
-            </Collapsible>
+      {tab === "audience" ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="Posts analysed" value={intel?.posts_analyzed ?? "—"} />
+            <Stat label="Viral spikes" value={intel?.spikes ?? "—"} />
+            <Stat label="Community" value={cs ? (cs.silent ? "Silent" : cs.state || "Active") : "—"} />
+            <Stat label="Reaction density" value={cs?.reaction_density != null ? `${cs.reaction_density}%` : "—"} />
           </div>
 
-          <Collapsible title="♻️ Recycle candidates (content lifecycle)">
-            {(it.recycle_candidates || []).length === 0 ? (
-              <p className="text-sm text-slate-500">No break-out posts to recycle yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {(it.recycle_candidates || []).map((r, i) => (
-                  <li key={i} className="rounded-lg border border-edge bg-white p-2.5 text-sm">
-                    <div className="flex items-center gap-2">
-                      <Badge tone="green">{r.er}% ER</Badge>
-                      <span className="truncate text-slate-700">{r.text_preview}</span>
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">{r.suggestion}</div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Collapsible>
-        </>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Section title="Post purpose mix" desc="Why each post exists">
+              {purpose.length ? <Donut data={purpose} nameKey="name" valueKey="value" height={220} />
+                : <EmptyState title="No purpose data yet" />}
+            </Section>
+            <Section title="Community signal" desc="How the audience interacts">
+              {cs ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <Stat label="Reaction density" value={`${cs.reaction_density}%`} />
+                  <Stat label="Forward rate" value={`${cs.forward_rate}%`} />
+                  <Stat label="Poll participation" value={cs.poll_participation != null ? `${cs.poll_participation}%` : "—"} />
+                  <Stat label="State" value={cs.silent ? "Silent" : (cs.state || "Active")} />
+                </div>
+              ) : <EmptyState title="No community signal yet" />}
+            </Section>
+            <Section title="Engagement by format" desc="Avg ER per format">
+              {formats.length ? <BarBreakdown data={formats} x="label" y="er" height={220} /> : <EmptyState title="No format data" />}
+            </Section>
+            <Section title="Engagement by topic" desc="Avg ER per topic">
+              {topics.length ? <BarBreakdown data={topics} x="label" y="er" height={220} /> : <EmptyState title="No topic data" />}
+            </Section>
+          </div>
+        </div>
+      ) : (
+        <Section title="Retention plan" desc="Habit-loop triggers the Strategy agent scheduled">
+          {data.retention_plan?.length ? (
+            <ol className="relative space-y-3 border-l border-edge pl-5">
+              {data.retention_plan.map((r, i) => (
+                <li key={i} className="relative">
+                  <span className="absolute -left-[22px] top-1.5 h-2.5 w-2.5 rounded-full bg-brand" />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="blue">{r.kind}</Badge>
+                    {r.format && <Badge>{r.format}</Badge>}
+                    <span className="text-sm font-medium text-slate-800">{r.topic}</span>
+                    {r.date && <span className="text-xs text-slate-400">{r.date}</span>}
+                    {r.status && <Badge tone="amber">{r.status}</Badge>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : <EmptyState title="No retention plan yet" hint="It appears when engagement dips or churn is detected." />}
+        </Section>
       )}
-
-      <Collapsible title="🔁 Retention plan — habit-loop triggers scheduled">
-        {data.retention_plan.length === 0 ? (
-          <p className="text-sm text-slate-500">No retention triggers active — channel is healthy, running the standard plan.</p>
-        ) : (
-          <ul className="space-y-2">
-            {data.retention_plan.map((t, i) => (
-              <li key={i} className="flex items-center gap-2 rounded-lg border border-edge bg-white p-2.5 text-sm">
-                <Badge tone="blue">{t.kind}</Badge>
-                <Badge>{t.format}</Badge>
-                <span className="text-slate-700">{t.topic}</span>
-                <span className="ml-auto text-xs text-slate-400">{t.date} · {t.status}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Collapsible>
     </div>
   );
 }

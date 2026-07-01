@@ -124,3 +124,78 @@ export function Collapsible({
     </div>
   );
 }
+
+export function PageHeader({ title, subtitle, actions }: {
+  title: React.ReactNode; subtitle?: React.ReactNode; actions?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 className="text-xl font-bold tracking-tight text-slate-900">{title}</h1>
+        {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
+      </div>
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+export function Section({ title, desc, actions, children }: {
+  title?: React.ReactNode; desc?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-edge bg-panel p-5 shadow-card">
+      {(title || actions) && (
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            {title && <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{title}</h3>}
+            {desc && <p className="mt-1 text-xs text-slate-500">{desc}</p>}
+          </div>
+          {actions}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+export function EmptyState({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="rounded-xl border border-dashed border-edge bg-field/50 px-6 py-10 text-center">
+      <p className="text-sm font-medium text-slate-600">{title}</p>
+      {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
+    </div>
+  );
+}
+
+export function Tabs({ tabs, active, onChange }: {
+  tabs: { key: string; label: React.ReactNode }[]; active: string; onChange: (k: string) => void;
+}) {
+  return (
+    <div className="mb-4 inline-flex rounded-lg border border-edge bg-field p-1">
+      {tabs.map((t) => (
+        <button key={t.key} onClick={() => onChange(t.key)}
+          className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+            active === t.key ? "bg-white text-brand shadow-sm" : "text-slate-500 hover:text-slate-800"
+          }`}>{t.label}</button>
+      ))}
+    </div>
+  );
+}
+
+export function Pagination({ page, pageCount, onPage }: {
+  page: number; pageCount: number; onPage: (p: number) => void;
+}) {
+  if (pageCount <= 1) return null;
+  return (
+    <div className="flex items-center justify-center gap-2 pt-2">
+      <button disabled={page === 0} onClick={() => onPage(Math.max(0, page - 1))}
+        className="rounded-md border border-edge bg-panel px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-40">← Prev</button>
+      {Array.from({ length: pageCount }).map((_, i) => (
+        <button key={i} onClick={() => onPage(i)}
+          className={`h-8 w-8 rounded-md text-sm transition ${i === page ? "bg-brand font-medium text-white" : "border border-edge bg-panel text-slate-600 hover:bg-slate-50"}`}>{i + 1}</button>
+      ))}
+      <button disabled={page >= pageCount - 1} onClick={() => onPage(Math.min(pageCount - 1, page + 1))}
+        className="rounded-md border border-edge bg-panel px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-40">Next →</button>
+    </div>
+  );
+}

@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getRole } from "@/lib/role";
+import { getActingUser } from "@/lib/currentUser";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [allowed, setAllowed] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (getRole() !== "admin") {
-      router.replace("/");
+    // Platform-admin gate (identity comes from the acting user, not the old X-Role).
+    if (!getActingUser().is_admin) {
+      router.replace("/channels");
       setAllowed(false);
     } else {
       setAllowed(true);

@@ -46,10 +46,11 @@ export default function OrganizationsPage() {
           {orgs.map((o) => (
             <Card key={o.id}>
               <div className="flex items-center justify-between">
-                <span className="font-medium text-slate-900">{o.name}</span>
+                <Link href={`/organizations/${o.id}`} className="font-medium text-slate-900 hover:text-brand hover:underline">{o.name}</Link>
                 <Badge tone="blue">{o.slug}</Badge>
               </div>
               <div className="mt-3 flex gap-3 text-sm">
+                <Link href={`/organizations/${o.id}`} className="text-brand hover:underline">Overview</Link>
                 <Link href={`/settings/users?org_id=${o.id}`} className="text-brand hover:underline">Users</Link>
                 <Link href={`/settings?org_id=${o.id}`} className="text-brand hover:underline">Settings</Link>
               </div>
