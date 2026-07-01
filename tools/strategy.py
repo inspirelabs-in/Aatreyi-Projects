@@ -17,6 +17,7 @@ from config import settings
 from db.base import AsyncSessionLocal
 from tools.analytics import classify_churn_risk
 from tools.retention import build_retention_triggers, fatigue_score
+from tools.strategy_profiles import DENSE, infer_strategy_profile
 from db.models import (
     AnalyticsSnapshot,
     CadenceLabel,
@@ -424,34 +425,42 @@ def _diverse_category(cats: list[str], used_recently: list[str], ci: int) -> tup
     return cats[ci % len(cats)], ci + 1
 
 
-def _build_deals_plan(
+def _build_dense_plan(
+    profile: dict,
     categories: list[str],
     period_date: date,
     competitor_intelligence: dict | None = None,
-    lead_minutes: int = 20,
 ) -> list[dict[str, Any]]:
-    """EXECUTION PLAN for GrabOn: a list of executable slots (StrategyTask shape).
+    """DENSE execution plan (deals-style): a list of executable slots (StrategyTask
+    shape) driven entirely by the resolved strategy `profile` — no GrabOn-specific
+    constants live here, so any dense-niche profile produces a valid plan.
 
-    The Strategy Agent is a *planner* — it only decides WHEN to post, WHAT category,
+    The Strategy Agent is a *planner*: it only decides WHEN to post, WHAT category,
     WHICH marketplace, loot vs single, media type, when to scrape, priority and WHY.
     It never scrapes products or writes captions; the Scheduler does that per slot.
 
-    Diversity: loot/single interleaved, marketplaces balanced (15A/10F), categories
-    round-robin with no back-to-back repeat, media balanced (single=photo, loot=none).
+    Diversity: loot/single interleaved, marketplaces balanced, categories round-robin
+    with no back-to-back repeat, media balanced (single=photo, loot=none).
     Auto-optimization: competitor best-hours bias slot priority and category order.
     """
-    n_loot = settings.GRABON_LOOT_PER_DAY
-    n_single = settings.GRABON_SINGLE_PER_DAY
-    total = n_loot + n_single
-    start_min = settings.GRABON_POST_START_HOUR * 60
-    end_min = (settings.GRABON_POST_END_HOUR + 1) * 60
-    step = max(1, (end_min - start_min) // max(total, 1))
+    rules = profile.get("execution_rules") or {}
+    kinds = rules.get("kinds") or {}
+    n_loot = int(kinds.get("loot", 0))
+    n_single = int(kinds.get("single", 0))
+    total = max(n_loot + n_single, 1)
+    window = (profile.get("timing") or {}).get("window") or [9, 23]
+    start_min = int(window[0]) * 60
+    end_min = (int(window[1]) + 1) * 60
+    step = max(1, (end_min - start_min) // total)
+    lead_minutes = int(rules.get("scrape_lead_min", 20))
     date_iso = period_date.isoformat()
 
-    # single-product platform sequence: 15 Amazon / 10 Flipkart, evenly interleaved
-    a, f = settings.GRABON_SINGLE_AMAZON, settings.GRABON_SINGLE_FLIPKART
-    seq = [((i + 0.5) / max(a, 1), "Amazon") for i in range(a)]
-    seq += [((i + 0.5) / max(f, 1), "Flipkart") for i in range(f)]
+    # single-product marketplace sequence from the profile's split, evenly interleaved.
+    mp_split = kinds.get("marketplace_split") or {"Amazon": n_single}
+    seq: list[tuple[float, str]] = []
+    for mp, cnt in mp_split.items():
+        for i in range(int(cnt)):
+            seq.append(((i + 0.5) / max(int(cnt), 1), mp))
     seq.sort()
     singles = [p for _, p in seq] or ["Amazon"]
 
@@ -460,7 +469,7 @@ def _build_deals_plan(
     # candidate is validated against the real DEAL_CATEGORIES set so junk n-grams
     # (e.g. "price", "amzn", "deal") from competitor text mining never leak into a
     # slot's scrape assignment.
-    from tools.deal_scrapers import DEAL_CATEGORIES, resolve_deal_categories
+    from tools.deal_scrapers import resolve_deal_categories
 
     intel = competitor_intelligence or {}
     trend_cats = [str(c) for c in (intel.get("trending_categories") or intel.get("emerging_trends") or [])]
@@ -472,8 +481,8 @@ def _build_deals_plan(
     _DEFAULT_CATS = ["Electronics", "Fashion Women", "Headphones", "Watches",
                      "Beauty", "Home & Kitchen", "Footwear", "Mobiles"]
     cats = valid or _DEFAULT_CATS
-    # Peak hours from competitor intelligence (local hours) → boost slot priority.
-    peak_hours = set(int(h) for h in (intel.get("best_hours") or []) if str(h).isdigit()) or {13, 20, 21}
+    # Peak hours from the profile (derived from competitor intelligence) → priority.
+    peak_hours = set(int(h) for h in ((profile.get("timing") or {}).get("peak_hours") or []))
 
     plan: list[dict[str, Any]] = []
     loot_done = si = ci = 0
@@ -526,6 +535,44 @@ def _deals_plan_display(slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "scrape_at": s.get("scrape_at"), "priority": s.get("priority"),
         "reason": s.get("rationale"),
     } for s in slots]
+
+
+def _build_curated_plan(
+    profile: dict,
+    primary_topics: list[str],
+    content_mix: list[dict],
+    slot_hours: list[int],
+    period_start: date,
+    period_end: date,
+) -> list[dict[str, Any]]:
+    """CURATED execution plan (content niches): a few peak-hour slots/day across the
+    period, each with a format (from the inferred mix) and a topic (round-robin over
+    the channel's best-engagement topics). Same StrategyTask shape as the dense plan
+    so the executor/UI treat every profile uniformly."""
+    format_cycle = _weighted_format_cycle(content_mix)
+    peak_set = set(slot_hours)
+    tasks: list[dict[str, Any]] = []
+    fi = ti = 0
+    cur = period_start
+    while cur <= period_end:
+        for h in slot_hours:
+            topic = primary_topics[ti % len(primary_topics)] if primary_topics else "general"
+            fmt = format_cycle[fi % len(format_cycle)] if format_cycle else "article"
+            tasks.append({
+                "scheduled_date": cur.isoformat(),
+                "scheduled_time": f"{h:02d}:00",
+                "format": fmt,
+                "topic": topic,
+                "kind": None,
+                "media_type": "photo" if fmt in ("photo", "meme", "video", "carousel") else "none",
+                "priority": 2 if h in peak_set else 1,
+                "rationale": (f"{topic}: chosen from your best-engagement topics; {fmt} format "
+                              f"(from the inferred mix); posted {h:02d}:00 (a peak audience hour)."),
+            })
+            fi += 1
+            ti += 1
+        cur += timedelta(days=1)
+    return tasks
 
 
 # ── Core (pure) ──────────────────────────────────────────────────────────────
@@ -616,43 +663,34 @@ def compute_strategy(
     except Exception:
         competitor_intelligence = {}
 
-    # DEALS (GrabOn): the executable 50-slot/day plan (loot + single) IS the
-    # strategy. The Strategy Agent only PLANS these slots (when/what/where/why);
-    # the Scheduler scrapes + ranks + writes the caption per slot at scrape time.
+    # ── INFER the optimal strategy profile FIRST — frequency, content mix, media
+    #    mix, timing and execution rules — from the channel's niche + audience +
+    #    history + competitor analysis. Only THEN is the execution plan generated.
+    #    GrabOn is simply the "deals" profile here, not a hardcoded branch.
+    peak_hours = [int(h) for h in (competitor_intelligence.get("best_hours") or []) if str(h).isdigit()]
+    profile = infer_strategy_profile(category, {
+        "posts_per_day": slots_per_day,
+        "content_mix": content_mix,
+        "slot_hours": slot_hours,
+        "peak_hours": peak_hours or slot_hours,
+    })
+    is_dense = profile["planner"] == DENSE
+
+    # ── Generate the execution plan FROM the profile (one uniform pipeline; the
+    #    planner dispatches on profile["planner"], never on the category). ──
     deals_plan: list[dict] = []
-    if is_deals:
-        tasks: list[dict] = _build_deals_plan(
-            primary_topics, ps, competitor_intelligence,
-            lead_minutes=settings.CONTENT_GENERATION_LEAD_MIN,
-        )
+    if is_dense:
+        tasks: list[dict] = _build_dense_plan(profile, primary_topics, ps, competitor_intelligence)
         deals_plan = _deals_plan_display(tasks)
     else:
-        # build tasks: weighted formats round-robin, topics round-robin
-        format_cycle = _weighted_format_cycle(content_mix)
-        tasks = []
-        fi = ti = 0
-        cur = ps
-        while cur <= pe:
-            for h in slot_hours:
-                tasks.append({
-                    "scheduled_date": cur.isoformat(),
-                    "scheduled_time": f"{h:02d}:00",
-                    "format": format_cycle[fi % len(format_cycle)] if format_cycle else "article",
-                    "topic": primary_topics[ti % len(primary_topics)],
-                    "kind": None,
-                    "reason": f"{primary_topics[ti % len(primary_topics)]}: chosen from your best-engagement topics; "
-                              f"posted {h:02d}:00 (a peak audience hour).",
-                })
-                fi += 1
-                ti += 1
-            cur += timedelta(days=1)
+        tasks = _build_curated_plan(profile, primary_topics, content_mix, slot_hours, ps, pe)
 
     # Phase 2: execute retention. When there's a retention concern (churn, weak
     # engagement, or a silent community), schedule habit-loop triggers as the
     # first slots  - gated so healthy active channels keep their plain plan.
-    # Deals/broadcast channels skip retention triggers — they're engagement/poll
+    # Dense/broadcast channels skip retention triggers — they're engagement/poll
     # style posts ("what do you want more of?") that a broadcast channel can't act on.
-    retention_concern = (not is_deals) and (
+    retention_concern = (not is_dense) and (
         bool(churn)
         or (avg_er is not None and avg_er < 2.0)
         or community_state == "silent"
@@ -678,31 +716,38 @@ def compute_strategy(
                 "topic": trig["topic"],
                 "kind": trig["kind"],
             }
-    # Recycling makes no sense for deals/broadcast channels — yesterday's deal has
-    # expired — so only recycle evergreen (non-deals) content.
-    if recycle_candidates and not is_deals:
+    # Recycling makes no sense for dense/broadcast channels — yesterday's deal has
+    # expired — so only recycle evergreen (curated) content.
+    if recycle_candidates and not is_dense:
         _inject_recycle_slots(tasks, recycle_candidates, slots_per_day)
     fatigue = fatigue_score(tasks)
 
-    if is_deals:
-        _end = (settings.GRABON_POST_END_HOUR + 1) % 24 or 24
-        _total = settings.GRABON_LOOT_PER_DAY + settings.GRABON_SINGLE_PER_DAY
+    if is_dense:
+        _rules = profile["execution_rules"]
+        _kinds = _rules["kinds"]
+        _win = profile["timing"]["window"]
+        _end = (_win[1] + 1) % 24 or 24
+        _total = profile["posts_per_day"]
+        _mp = _kinds.get("marketplace_split") or {}
+        _mp_txt = ", ".join(f"{v} {k}" for k, v in _mp.items())
         goal = (
-            f"Auto-post {_total} deals/day, {settings.GRABON_POST_START_HOUR}:00–{_end}:00: "
-            f"{settings.GRABON_LOOT_PER_DAY} loot compilations (multi-link, grouped by category, "
-            f"link-only) + {settings.GRABON_SINGLE_PER_DAY} single-product posts (photo) — split "
-            f"{settings.GRABON_SINGLE_AMAZON} Amazon / {settings.GRABON_SINGLE_FLIPKART} Flipkart, "
-            f"affiliate-tagged. Categories led by audience engagement "
-            f"({', '.join(primary_topics[:3])})."
+            f"Auto-post {_total} deals/day, {_win[0]}:00–{_end}:00: "
+            f"{_kinds['loot']} loot compilations (multi-link, grouped by category, link-only) + "
+            f"{_kinds['single']} single-product posts (photo)"
+            + (f" — split {_mp_txt}, affiliate-tagged" if _mp_txt else "")
+            + f". Categories led by audience engagement ({', '.join(primary_topics[:3])})."
         )
         auto_applied = [
-            f"Schedule: {_total} posts spread {settings.GRABON_POST_START_HOUR}:00–{_end}:00 "
-            f"({settings.GRABON_LOOT_PER_DAY} loot + {settings.GRABON_SINGLE_PER_DAY} single).",
+            f"Schedule: {_total} posts spread {_win[0]}:00–{_end}:00 "
+            f"({_kinds['loot']} loot + {_kinds['single']} single).",
             "Formats applied: loot → link compilation; single product → photo.",
-            f"Platform split applied: {settings.GRABON_SINGLE_AMAZON} Amazon / "
-            f"{settings.GRABON_SINGLE_FLIPKART} Flipkart singles.",
+        ]
+        if _mp_txt:
+            auto_applied.append(f"Marketplace split applied: {_mp_txt} singles.")
+        auto_applied += [
             "Categories chosen by audience engagement (competitor + own high-ER posts).",
-            "Each post scraped fresh ~15-20 min before its slot and auto-published at the slot time.",
+            f"Each post scraped fresh ~{_rules.get('scrape_lead_min', 20)} min before its slot and "
+            "auto-published at the slot time.",
             "Duplicate products blocked (by title + link) within the no-repeat window.",
         ]
     else:
@@ -726,6 +771,7 @@ def compute_strategy(
         "goal": goal,
         "diagnosis": diagnosis,
         "auto_applied": auto_applied,
+        "strategy_profile": profile,
         "deals_plan": deals_plan,
         "post_frequency_per_day": freq,
         "content_mix": content_mix,
@@ -824,6 +870,7 @@ async def save_strategy(channel_id: str | uuid.UUID, strategy_payload: dict) -> 
             analysis={
                 "diagnosis": strategy_payload.get("diagnosis"),
                 "auto_applied": strategy_payload.get("auto_applied"),
+                "strategy_profile": strategy_payload.get("strategy_profile"),
                 "deals_plan": strategy_payload.get("deals_plan"),
                 "benchmark": strategy_payload.get("benchmark"),
                 "fatigue": strategy_payload.get("fatigue"),

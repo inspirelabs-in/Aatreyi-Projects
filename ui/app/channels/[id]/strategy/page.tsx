@@ -58,6 +58,32 @@ export default function StrategyPage() {
         )}
       </Collapsible>
 
+      {data.strategy_profile && (
+        <Collapsible title={`🧭 Inferred strategy — ${data.strategy_profile.planner === "dense" ? "dense (high-volume, JIT-scraped)" : "curated (few peak-hour posts)"} profile`}>
+          <p className="mb-3 text-sm text-slate-600">{data.strategy_profile.rationale}</p>
+          <div className="grid gap-3 sm:grid-cols-3 text-sm">
+            <div className="rounded-lg border border-edge p-3">
+              <div className="text-xs uppercase text-slate-500">Posting frequency</div>
+              <div className="mt-1 font-semibold text-slate-900">{data.strategy_profile.posts_per_day} / day</div>
+            </div>
+            <div className="rounded-lg border border-edge p-3">
+              <div className="text-xs uppercase text-slate-500">Timing</div>
+              <div className="mt-1 font-semibold text-slate-900">
+                {data.strategy_profile.timing?.mode === "window" && data.strategy_profile.timing?.window
+                  ? `${data.strategy_profile.timing.window[0]}:00–${(data.strategy_profile.timing.window[1] + 1) % 24 || 24}:00`
+                  : (data.strategy_profile.timing?.peak_hours || []).map((h) => `${String(h).padStart(2, "0")}:00`).join(", ") || "peak hours"}
+              </div>
+            </div>
+            <div className="rounded-lg border border-edge p-3">
+              <div className="text-xs uppercase text-slate-500">Media mix</div>
+              <div className="mt-1 font-medium text-slate-800">
+                {(data.strategy_profile.media_mix || []).map((m) => `${m.media} ${m.pct}%`).join(" · ") || "—"}
+              </div>
+            </div>
+          </div>
+        </Collapsible>
+      )}
+
       {(data.auto_applied || []).length > 0 && (
         <Collapsible title="🤖 Automatically implemented by the agent">
           <p className="mb-2 text-xs text-slate-500">You don't need to do anything — the agent applies and executes all of this:</p>

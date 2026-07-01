@@ -308,6 +308,10 @@ async def llm_enrich_strategy(
         new_mix = _normalise_to_pct(counts)
         if new_mix:
             payload["content_mix"] = new_mix
+            # keep the inferred strategy profile's mix in sync with the LLM tuning
+            prof = payload.get("strategy_profile")
+            if isinstance(prof, dict):
+                prof["content_mix"] = new_mix
 
         payload["strategist"] = "llm"
         log.info("strategy_llm: %s -> %d categories across %d slots, %dG/%dR recs",

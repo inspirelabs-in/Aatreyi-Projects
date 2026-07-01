@@ -83,6 +83,17 @@ export interface Strategy {
   growth_tactics: { tactic: string; detail: string; why?: string; action?: string; severity?: string }[] | null;
   diagnosis?: string | null;
   auto_applied?: string[] | null;
+  strategy_profile?: {
+    category?: string | null;
+    family?: string;
+    planner?: string;
+    posts_per_day?: number;
+    content_mix?: { format: string; pct: number }[];
+    media_mix?: { media: string; pct: number }[];
+    timing?: { mode?: string; window?: number[]; peak_hours?: number[] };
+    execution_rules?: Record<string, unknown>;
+    rationale?: string;
+  } | null;
   deals_plan?: { time: string; type: string; category: string; format: string; platform: string | null; scrape_at?: string | null; priority?: number | null; reason: string }[] | null;
   benchmark?: { competitor_avg_er: number | null; my_avg_er: number | null; target_er: number | null } | null;
   fatigue?: { score: number; flags: string[] } | null;
