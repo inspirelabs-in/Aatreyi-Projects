@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     # Sanity cap: discounts above this are treated as scrape errors (mis-parsed
     # original price) and dropped by the ranker. 95% keeps genuine loot deals.
     DEAL_MAX_DISCOUNT: int = Field(default=95)
+    # GrabOn URL shortener: after affiliate-link generation, deal links are shortened
+    # to grbn.in via this API and the short link is what goes in the post. Empty = off.
+    SHORTENER_API_URL: str = Field(default="https://shortner-api.grabon.com/api/url/shorten")
     # Platforms to scrape and how many deals per category to keep.
     # Ajio is wired (scrape_ajio + ajio_kw) but Akamai-blocked, so it's OFF by
     # default — add "Ajio" here once an affiliate feed / anti-bot fetch is set up.

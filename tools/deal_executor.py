@@ -116,6 +116,26 @@ async def execute_deal_slot(
         except Exception:
             pass
 
+    # 4c. Shorten deal links via the GrabOn shortener (grbn.in) — AFTER affiliate-link
+    #     generation — so the short link is what appears in the post. Single = the CTA
+    #     button link; loot = every inline <a href>. Fail-open (keeps affiliate link).
+    try:
+        import re, html as _html
+        from tools.shortener import shorten_url, shorten_many
+        if kind == "single" and post.get("link_url"):
+            post["link_url"] = await shorten_url(post["link_url"])
+        elif kind == "loot" and post.get("post_text"):
+            text = post["post_text"]
+            escaped = set(re.findall(r'href="([^"]+)"', text))
+            mapping = await shorten_many(_html.unescape(h) for h in escaped)
+            for h in escaped:
+                short = mapping.get(_html.unescape(h))
+                if short and short != _html.unescape(h):
+                    text = text.replace(f'href="{h}"', f'href="{short}"')
+            post["post_text"] = text
+    except Exception:
+        pass
+
     # 5. queue for approval (auto-approved when the channel is autonomous). The
     #    slot's scheduled_at makes publish_due_posts send it AT its planned time.
     gp_payload = {
