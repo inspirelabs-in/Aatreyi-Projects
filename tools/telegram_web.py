@@ -48,8 +48,13 @@ def _parse_count(s: str | None) -> int | None:
     return int(num * mult)
 
 
-async def _fetch_html(url: str, timeout: float = 15.0) -> str | None:
-    """GET url as HTML (httpx, then Playwright fallback). None on failure."""
+async def _fetch_html(url: str, timeout: float = 8.0) -> str | None:
+    """GET url as HTML via httpx. None on failure.
+
+    Deliberately httpx-only: t.me/s and the search pages are static HTML that
+    httpx fetches fine (verified from the Railway datacenter). A per-call Playwright
+    fallback was removed — with dozens of fetches per competitor run it launched a
+    browser per hiccup and made runs take 10+ minutes."""
     import httpx
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=timeout,
@@ -59,23 +64,7 @@ async def _fetch_html(url: str, timeout: float = 15.0) -> str | None:
                 return r.text
     except Exception:
         pass
-    # Playwright fallback (anti-bot / JS walls).
-    try:
-        from playwright.async_api import async_playwright
-        from tools.deal_scrapers import _playwright_proxy
-        async with async_playwright() as p:
-            kw = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage"]}
-            pr = _playwright_proxy()
-            if pr:
-                kw["proxy"] = pr
-            browser = await p.chromium.launch(**kw)
-            page = await (await browser.new_context(user_agent=_UA)).new_page()
-            await page.goto(url, timeout=int(timeout * 1000), wait_until="domcontentloaded")
-            html = await page.content()
-            await browser.close()
-            return html
-    except Exception:
-        return None
+    return None
 
 
 def _parse_preview(html: str, handle: str) -> dict[str, Any] | None:
@@ -198,7 +187,8 @@ async def resolve_brand_handle(brand: str) -> dict[str, Any] | None:
     t.me/s and requiring the result to actually reference the brand. Returns the
     first relevant match with its preview data, else None (never a wrong channel)."""
     tried: set[str] = set()
-    candidates = (await _search_handles(brand) + _slug_candidates(brand))[:8]
+    # Cap total verifications per brand — each is one httpx GET; keep runs fast.
+    candidates = (await _search_handles(brand) + _slug_candidates(brand))[:6]
     matches: list[dict[str, Any]] = []
     for h in candidates:
         h = h.lstrip("@").lower()
