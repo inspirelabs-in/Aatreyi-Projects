@@ -274,40 +274,17 @@ async def llm_enrich_strategy(
             payload["retention_recommendations"] = rr
         payload["primary_topics"] = ranked[:8]
 
-        # ── spread categories across slots (round-robin → variety, favourites
-        #    first). No slot keeps a rule-based/DNA topic, so nothing hallucinated. ──
-        if is_deals:
-            # Deals slots are an EXECUTION PLAN: loot slots aggregate many categories
-            # (topic "Multiple", no image) and single slots target one category with
-            # a photo. Only re-assign categories to SINGLE slots — never touch loot
-            # slots or the execution fields (kind/format/media/marketplace/scrape_at).
-            ci = 0
-            for task in tasks:
-                if (task.get("kind") or "").lower() == "single":
-                    task["topic"] = ranked[ci % len(ranked)][:128]
-                    ci += 1
-        else:
-            for i, task in enumerate(tasks):
-                task["topic"] = ranked[i % len(ranked)][:128]
-
-        # Regenerate every slot's reason from its FINAL (LLM-ranked) topic so the
-        # per-slot rationale always matches the assigned category — and refresh the
-        # deals-plan projection for the UI.
+        # ── Re-run the sequential, evidence-based reasoner with the LLM-ranked
+        #    categories. It assigns each open slot's category with decision memory
+        #    (diversity spacing, marketplace allocation, rank) and writes a unique
+        #    Evidence→Decision reason — loot slots and execution fields are untouched. ──
         try:
-            from tools.slot_reasons import _apply_slot_reasons
+            from tools.slot_reasons import _apply_slot_reasons, reason_ctx
             prof = payload.get("strategy_profile") or {}
             comp_intel = payload.get("competitor_intelligence") or {}
-            trending = {str(c).lower() for c in
-                        (comp_intel.get("trending_categories")
-                         or comp_intel.get("emerging_trends") or [])}
-            ctx = {
-                "family": prof.get("family") or ("deals" if is_deals else "content"),
-                "niche": category or "",
-                "peak_hours": set((prof.get("timing") or {}).get("peak_hours") or []),
-                "trending": trending,
-                "cats_sample": ranked,
-            }
-            _apply_slot_reasons(tasks, ctx)
+            trending = (comp_intel.get("trending_categories")
+                        or comp_intel.get("emerging_trends") or [])
+            _apply_slot_reasons(tasks, reason_ctx(prof, ranked, trending, category))
             if is_deals:
                 from tools.strategy import _deals_plan_display
                 payload["deals_plan"] = _deals_plan_display(tasks)

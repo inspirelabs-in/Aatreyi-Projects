@@ -213,53 +213,29 @@ export default function StrategyPage() {
         </Collapsible>
       )}
 
-      {(data.deals_plan || []).length > 0 && (
-        <Collapsible title={`📅 Execution plan — ${(data.deals_plan || []).length} slots (loot + single), scraped just-in-time & auto-published`}>
-          <p className="mb-3 text-xs text-slate-500">
-            The Strategy Agent only plans these slots (when · category · marketplace · loot/single · media · why).
-            The Scheduler scrapes each slot ~{"15–20"} min before its time, ranks fresh deals (discount + engagement +
-            stock + competitor trends), writes one caption with one link, and auto-publishes at the post time.
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-xs uppercase text-slate-500">
-                <tr><th className="py-2 pr-3">Scrape</th><th className="pr-3">Post</th><th className="pr-3">Type</th><th className="pr-3">Category</th><th className="pr-3">Marketplace</th><th className="pr-3">Media</th><th className="pr-3">Prio</th><th>Why (reason)</th></tr>
-              </thead>
-              <tbody>
-                {(data.deals_plan || []).map((p, i) => (
-                  <tr key={i} className="border-t border-edge align-top">
-                    <td className="py-2 pr-3 whitespace-nowrap text-xs text-slate-500">{p.scrape_at}</td>
-                    <td className="pr-3 whitespace-nowrap font-medium text-slate-800">{p.time}</td>
-                    <td className="pr-3"><Badge tone={p.type === "loot" ? "amber" : "blue"}>{p.type}</Badge></td>
-                    <td className="pr-3 text-slate-700">{p.category}</td>
-                    <td className="pr-3 text-slate-700">{p.platform || "—"}</td>
-                    <td className="pr-3"><Badge tone="slate">{p.format === "photo" ? "photo" : "links"}</Badge></td>
-                    <td className="pr-3 text-slate-500">{p.priority ?? "—"}</td>
-                    <td className="text-xs text-slate-500">{p.reason}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Collapsible>
-      )}
-
       {data.tasks.length > 0 && (
-      <Collapsible title={`Post slots (${data.tasks.length})`}>
+      <Collapsible title={`📅 Execution plan — ${data.tasks.length} slots (scraped just-in-time, auto-queued with a per-slot reason)`}>
+        <p className="mb-3 text-xs text-slate-500">
+          The Strategy Agent plans each slot sequentially — deciding time, category, marketplace, media and priority — and
+          records the evidence behind every decision. The Scheduler then scrapes ~15–20 min before each slot, ranks fresh
+          deals, writes one caption with one link, and queues it at the post time.
+        </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase text-slate-500">
-              <tr><th className="py-2 pr-3">Date</th><th className="pr-3">Time</th><th className="pr-3">Format</th><th className="pr-3">Topic</th><th className="pr-3">Status</th><th>Reason</th></tr>
+              <tr><th className="py-2 pr-3">Scrape</th><th className="pr-3">Post</th><th className="pr-3">Type</th><th className="pr-3">Topic</th><th className="pr-3">Market</th><th className="pr-3">Media</th><th className="pr-3">Status</th><th>Reason</th></tr>
             </thead>
             <tbody>
               {data.tasks.map((t) => (
                 <tr key={t.task_id} className="border-t border-edge align-top">
-                  <td className="py-2 pr-3 whitespace-nowrap">{t.date}</td>
-                  <td className="pr-3 whitespace-nowrap">{t.time?.slice(0, 5)}</td>
-                  <td className="pr-3"><Badge>{t.format}</Badge></td>
-                  <td className="pr-3">{t.kind ? <><Badge tone="blue">{t.kind}</Badge> {t.topic}</> : t.topic}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap text-xs text-slate-500">{t.scrape_at?.slice(0, 5) || "—"}</td>
+                  <td className="pr-3 whitespace-nowrap font-medium text-slate-800">{t.time?.slice(0, 5)}</td>
+                  <td className="pr-3"><Badge tone={t.kind === "loot" ? "amber" : "blue"}>{t.kind || t.format}</Badge></td>
+                  <td className="pr-3 text-slate-700">{t.topic}</td>
+                  <td className="pr-3 text-slate-700">{t.marketplace || "—"}</td>
+                  <td className="pr-3 text-slate-500">{t.media_type || "—"}</td>
                   <td className="pr-3"><Badge tone="amber">{t.status}</Badge></td>
-                  <td className="text-xs text-slate-500">{t.rationale}</td>
+                  <td className="whitespace-pre-line text-xs text-slate-500 min-w-[22rem]">{t.rationale}</td>
                 </tr>
               ))}
             </tbody>

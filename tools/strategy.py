@@ -17,7 +17,7 @@ from config import settings
 from db.base import AsyncSessionLocal
 from tools.analytics import classify_churn_risk
 from tools.retention import build_retention_triggers, fatigue_score
-from tools.slot_reasons import _apply_slot_reasons
+from tools.slot_reasons import _apply_slot_reasons, reason_ctx
 from tools.strategy_profiles import DENSE, infer_strategy_profile
 from db.models import (
     AnalyticsSnapshot,
@@ -413,37 +413,32 @@ def _minute_to_hhmm(m: int) -> str:
     return f"{(m // 60) % 24:02d}:{m % 60:02d}"
 
 
-def _diverse_category(cats: list[str], used_recently: list[str], ci: int) -> tuple[str, int]:
-    """Pick the next category round-robin but skip one that appeared in the last
-    `window` slots (avoid back-to-back category repetition). Returns (cat, next_ci)."""
-    if not cats:
-        return "Electronics", ci
-    window = min(len(cats) - 1, 3)
-    for step in range(len(cats)):
-        cand = cats[(ci + step) % len(cats)]
-        if window == 0 or cand not in used_recently[-window:]:
-            return cand, ci + step + 1
-    return cats[ci % len(cats)], ci + 1
+def deal_categories_ranked(primary_topics: list[str], competitor_intelligence: dict | None) -> list[str]:
+    """Ordered list of REAL deal categories for the reasoner to assign from. Trends
+    from competitor mining come first, then the channel's own topics; every entry is
+    validated against DEAL_CATEGORIES so junk n-grams ('price', 'deal') never leak in."""
+    from tools.deal_scrapers import resolve_deal_categories
+
+    intel = competitor_intelligence or {}
+    trend_cats = [str(c) for c in (intel.get("trending_categories") or intel.get("emerging_trends") or [])]
+    valid: list[str] = []
+    for c in (trend_cats + list(primary_topics or [])):
+        match = resolve_deal_categories(c)
+        if match and match[0]["category"] not in valid:
+            valid.append(match[0]["category"])
+    _DEFAULT_CATS = ["Electronics", "Fashion Women", "Headphones", "Watches",
+                     "Beauty", "Home & Kitchen", "Footwear", "Mobiles"]
+    return valid or _DEFAULT_CATS
 
 
-def _build_dense_plan(
-    profile: dict,
-    categories: list[str],
-    period_date: date,
-    competitor_intelligence: dict | None = None,
-) -> list[dict[str, Any]]:
-    """DENSE execution plan (deals-style): a list of executable slots (StrategyTask
-    shape) driven entirely by the resolved strategy `profile` — no GrabOn-specific
-    constants live here, so any dense-niche profile produces a valid plan.
+def _build_dense_plan(profile: dict, period_date: date) -> list[dict[str, Any]]:
+    """DENSE execution plan SKELETON (deals-style): times, scrape windows, loot/single
+    kind, marketplace split, media and priority — all from the resolved `profile`
+    (no GrabOn constants here). Categories and per-slot reasons are assigned later by
+    the sequential reasoner (`_apply_slot_reasons`), which has decision memory.
 
-    The Strategy Agent is a *planner*: it only decides WHEN to post, WHAT category,
-    WHICH marketplace, loot vs single, media type, when to scrape, priority and WHY.
-    It never scrapes products or writes captions; the Scheduler does that per slot.
-
-    Diversity: loot/single interleaved, marketplaces balanced, categories round-robin
-    with no back-to-back repeat, media balanced (single=photo, loot=none).
-    Auto-optimization: competitor best-hours bias slot priority and category order.
-    """
+    The Strategy Agent is a *planner*: it decides WHEN to post, loot vs single, WHICH
+    marketplace, media type, scrape time and priority. It never scrapes or captions."""
     rules = profile.get("execution_rules") or {}
     kinds = rules.get("kinds") or {}
     n_loot = int(kinds.get("loot", 0))
@@ -455,6 +450,7 @@ def _build_dense_plan(
     step = max(1, (end_min - start_min) // total)
     lead_minutes = int(rules.get("scrape_lead_min", 20))
     date_iso = period_date.isoformat()
+    peak_hours = set(int(h) for h in ((profile.get("timing") or {}).get("peak_hours") or []))
 
     # single-product marketplace sequence from the profile's split, evenly interleaved.
     mp_split = kinds.get("marketplace_split") or {"Amazon": n_single}
@@ -465,34 +461,12 @@ def _build_dense_plan(
     seq.sort()
     singles = [p for _, p in seq] or ["Amazon"]
 
-    # Auto-optimization: order categories by competitor demand where known so the
-    # top-performing categories land in more (and higher-priority) slots. Every
-    # candidate is validated against the real DEAL_CATEGORIES set so junk n-grams
-    # (e.g. "price", "amzn", "deal") from competitor text mining never leak into a
-    # slot's scrape assignment.
-    from tools.deal_scrapers import resolve_deal_categories
-
-    intel = competitor_intelligence or {}
-    trend_cats = [str(c) for c in (intel.get("trending_categories") or intel.get("emerging_trends") or [])]
-    valid: list[str] = []
-    for c in (trend_cats + list(categories or [])):
-        match = resolve_deal_categories(c)
-        if match and match[0]["category"] not in valid:
-            valid.append(match[0]["category"])
-    _DEFAULT_CATS = ["Electronics", "Fashion Women", "Headphones", "Watches",
-                     "Beauty", "Home & Kitchen", "Footwear", "Mobiles"]
-    cats = valid or _DEFAULT_CATS
-    # Peak hours from the profile (derived from competitor intelligence) → priority.
-    peak_hours = set(int(h) for h in ((profile.get("timing") or {}).get("peak_hours") or []))
-
     plan: list[dict[str, Any]] = []
-    loot_done = si = ci = 0
-    used: list[str] = []
+    loot_done = si = 0
     for i in range(total):
         m = start_min + i * step
         t = _minute_to_hhmm(m)
-        scrape_min = (m - lead_minutes) % (24 * 60)
-        scrape_at = _minute_to_hhmm(scrape_min)
+        scrape_at = _minute_to_hhmm((m - lead_minutes) % (24 * 60))
         hour = (m // 60) % 24
         base_priority = 2 if hour in peak_hours else 1
         if i % 2 == 0 and loot_done < n_loot:
@@ -500,30 +474,14 @@ def _build_dense_plan(
             plan.append({
                 "scheduled_date": date_iso, "scheduled_time": t, "scrape_at": scrape_at,
                 "kind": "loot", "format": "link", "topic": "Multiple",
-                "marketplace": None, "media_type": "none",
-                "priority": base_priority + 2,  # loot aggregates → high value
-                "rationale": (
-                    f"Loot compilation at {t}: aggregate the biggest-discount deals across "
-                    f"{', '.join(cats[:3])} (no image, clickable links). Scrape at {scrape_at} "
-                    f"(T−{lead_minutes}m)."
-                    + (f" {hour:02d}:00 is a competitor peak hour → prioritised." if hour in peak_hours else "")
-                ),
+                "marketplace": None, "media_type": "none", "priority": base_priority + 2,
             })
         else:
             plat = singles[si % len(singles)]; si += 1
-            cat, ci = _diverse_category(cats, used, ci)
-            used.append(cat)
             plan.append({
                 "scheduled_date": date_iso, "scheduled_time": t, "scrape_at": scrape_at,
-                "kind": "single", "format": "photo", "topic": cat,
-                "marketplace": plat, "media_type": "photo",
-                "priority": base_priority + 1,
-                "rationale": (
-                    f"{cat} single-product post at {t} from {plat} (photo — best for one product). "
-                    f"Category by audience engagement + competitor demand; scrape at {scrape_at} "
-                    f"(T−{lead_minutes}m)."
-                    + (f" {hour:02d}:00 is a competitor peak hour → prioritised." if hour in peak_hours else "")
-                ),
+                "kind": "single", "format": "photo", "topic": None,
+                "marketplace": plat, "media_type": "photo", "priority": base_priority + 1,
             })
     return plan
 
@@ -557,18 +515,15 @@ def _build_curated_plan(
     cur = period_start
     while cur <= period_end:
         for h in slot_hours:
-            topic = primary_topics[ti % len(primary_topics)] if primary_topics else "general"
             fmt = format_cycle[fi % len(format_cycle)] if format_cycle else "article"
             tasks.append({
                 "scheduled_date": cur.isoformat(),
                 "scheduled_time": f"{h:02d}:00",
                 "format": fmt,
-                "topic": topic,
+                "topic": None,  # assigned by the sequential reasoner (diversity + rank)
                 "kind": None,
                 "media_type": "photo" if fmt in ("photo", "meme", "video", "carousel") else "none",
                 "priority": 2 if h in peak_set else 1,
-                "rationale": (f"{topic}: chosen from your best-engagement topics; {fmt} format "
-                              f"(from the inferred mix); posted {h:02d}:00 (a peak audience hour)."),
             })
             fi += 1
             ti += 1
@@ -664,16 +619,29 @@ def compute_strategy(
     except Exception:
         competitor_intelligence = {}
 
+    # ── Peak-hour evidence: only claim a "peak hour" when real data backs it.
+    #    Prefer the channel's own hourly engagement (audience), else competitor
+    #    posting hours; otherwise no peak-hour claim is made in the reasons. ──
+    if local_by_hour:
+        peak_hours = [h for h, _ in sorted(local_by_hour.items(), key=lambda kv: -kv[1])[:3]]
+        peak_source, has_peak_data = "audience", True
+    elif best_local is not None:
+        peak_hours, peak_source, has_peak_data = [best_local], "audience", True
+    else:
+        peak_hours = [int(h) for h in (competitor_intelligence.get("best_hours") or []) if str(h).isdigit()]
+        peak_source, has_peak_data = ("competitor", True) if peak_hours else ("none", False)
+
     # ── INFER the optimal strategy profile FIRST — frequency, content mix, media
     #    mix, timing and execution rules — from the channel's niche + audience +
     #    history + competitor analysis. Only THEN is the execution plan generated.
     #    GrabOn is simply the "deals" profile here, not a hardcoded branch.
-    peak_hours = [int(h) for h in (competitor_intelligence.get("best_hours") or []) if str(h).isdigit()]
     profile = infer_strategy_profile(category, {
         "posts_per_day": slots_per_day,
         "content_mix": content_mix,
         "slot_hours": slot_hours,
         "peak_hours": peak_hours or slot_hours,
+        "peak_source": peak_source,
+        "has_peak_data": has_peak_data,
     })
     is_dense = profile["planner"] == DENSE
 
@@ -681,7 +649,7 @@ def compute_strategy(
     #    planner dispatches on profile["planner"], never on the category). ──
     deals_plan: list[dict] = []
     if is_dense:
-        tasks: list[dict] = _build_dense_plan(profile, primary_topics, ps, competitor_intelligence)
+        tasks: list[dict] = _build_dense_plan(profile, ps)
     else:
         tasks = _build_curated_plan(profile, primary_topics, content_mix, slot_hours, ps, pe)
 
@@ -722,20 +690,14 @@ def compute_strategy(
         _inject_recycle_slots(tasks, recycle_candidates, slots_per_day)
     fatigue = fatigue_score(tasks)
 
-    # ── Bake growth+retention optimizations into the schedule: stamp EVERY slot
-    #    with a concise, specific reason (competitor peaks, category/marketplace
-    #    performance, trending topics, media choice, diversity, niche timing). ──
-    _trending = {str(c).lower() for c in
-                 (competitor_intelligence.get("trending_categories")
-                  or competitor_intelligence.get("emerging_trends") or [])}
-    reason_ctx = {
-        "family": profile.get("family"),
-        "niche": category or "",
-        "peak_hours": set((profile.get("timing") or {}).get("peak_hours") or slot_hours),
-        "trending": _trending,
-        "cats_sample": primary_topics,
-    }
-    _apply_slot_reasons(tasks, reason_ctx)
+    # ── Sequential, evidence-based reasoning: assign each slot's category with
+    #    decision memory and stamp a unique Evidence→Decision reason (engagement
+    #    rank, diversity spacing, marketplace allocation, real peak hours). ──
+    _trending = [str(c) for c in (competitor_intelligence.get("trending_categories")
+                                  or competitor_intelligence.get("emerging_trends") or [])]
+    ranked_for_reasons = (deal_categories_ranked(primary_topics, competitor_intelligence)
+                          if is_dense else primary_topics)
+    _apply_slot_reasons(tasks, reason_ctx(profile, ranked_for_reasons, _trending, category))
     if is_dense:
         deals_plan = _deals_plan_display(tasks)
 

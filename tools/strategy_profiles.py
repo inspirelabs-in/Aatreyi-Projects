@@ -72,7 +72,9 @@ def _deals_profile(category: str | None, signals: dict) -> dict[str, Any]:
             {"media": "none (loot)", "pct": round(loot / total * 100)},
             {"media": "photo (single)", "pct": round(single / total * 100)},
         ],
-        "timing": {"mode": "window", "window": [start, end], "peak_hours": peak},
+        "timing": {"mode": "window", "window": [start, end], "peak_hours": peak,
+                   "peak_source": signals.get("peak_source") or "competitor",
+                   "has_peak_data": bool(signals.get("has_peak_data"))},
         "execution_rules": {
             "needs_scraping": True,
             "scrape_lead_min": settings.CONTENT_GENERATION_LEAD_MIN,
@@ -107,9 +109,12 @@ def _content_profile(category: str | None, signals: dict) -> dict[str, Any]:
     hardcoded per category, so any niche works out of the box."""
     ppd = int(signals.get("posts_per_day") or 1)
     content_mix = signals.get("content_mix") or []
-    peak_hours = signals.get("slot_hours") or []
+    schedule_hours = signals.get("slot_hours") or []
+    # Real audience peak hours (for honest "peak hour" evidence) — NOT every slot
+    # hour. Falls back to the schedule hours only when no peak data exists.
+    peak_hours = signals.get("peak_hours") or schedule_hours
     top_formats = ", ".join(m["format"] for m in content_mix[:3]) or "a balanced mix"
-    peak_txt = ", ".join(f"{h:02d}:00" for h in peak_hours[:3]) or "peak audience hours"
+    peak_txt = ", ".join(f"{h:02d}:00" for h in schedule_hours[:3]) or "peak audience hours"
     return {
         "category": category,
         "family": "content",
@@ -117,7 +122,9 @@ def _content_profile(category: str | None, signals: dict) -> dict[str, Any]:
         "posts_per_day": ppd,
         "content_mix": content_mix,
         "media_mix": _media_mix_from_formats(content_mix),
-        "timing": {"mode": "peak_hours", "peak_hours": peak_hours},
+        "timing": {"mode": "peak_hours", "peak_hours": peak_hours,
+                   "peak_source": signals.get("peak_source") or "audience",
+                   "has_peak_data": bool(signals.get("has_peak_data"))},
         "execution_rules": {
             "needs_scraping": False,
             "generate_lead_min": settings.CONTENT_GENERATION_LEAD_MIN,
