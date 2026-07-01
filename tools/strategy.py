@@ -407,6 +407,49 @@ def build_diagnosis(avg_er, subscriber_delta, churn_signal, bench, tactics) -> s
     return ("; ".join(parts) + "." + tail) if parts else "Insufficient data for a full diagnosis yet."
 
 
+def _build_deals_plan(categories: list[str]) -> list[dict[str, Any]]:
+    """Concrete GrabOn day-plan: LOOT + SINGLE posts, each with a time, format,
+    platform and a REASON (why this category / format / time). This is what the
+    dense auto-poster runs — shown so the strategy is specific, not vague."""
+    n_loot = settings.GRABON_LOOT_PER_DAY
+    n_single = settings.GRABON_SINGLE_PER_DAY
+    total = n_loot + n_single
+    start_min = settings.GRABON_POST_START_HOUR * 60
+    end_min = (settings.GRABON_POST_END_HOUR + 1) * 60
+    step = max(1, (end_min - start_min) // max(total, 1))
+    # single-product platform sequence: 15 Amazon / 10 Flipkart, evenly interleaved
+    a, f = settings.GRABON_SINGLE_AMAZON, settings.GRABON_SINGLE_FLIPKART
+    seq = [((i + 0.5) / max(a, 1), "Amazon") for i in range(a)]
+    seq += [((i + 0.5) / max(f, 1), "Flipkart") for i in range(f)]
+    seq.sort()
+    singles = [p for _, p in seq] or ["Amazon"]
+    cats = categories or ["Electronics"]
+
+    plan: list[dict[str, Any]] = []
+    loot_done = si = ci = 0
+    for i in range(total):
+        m = start_min + i * step
+        t = f"{(m // 60) % 24:02d}:{m % 60:02d}"
+        if i % 2 == 0 and loot_done < n_loot:
+            loot_done += 1
+            plan.append({
+                "time": t, "type": "loot", "category": "Multiple", "format": "link", "platform": None,
+                "reason": (f"Loot compilation — bundles today's biggest-discount deals across your top "
+                           f"categories ({', '.join(cats[:3])}); link format fits many products in one post; "
+                           f"spaced through the day for steady reach."),
+            })
+        else:
+            plat = singles[si % len(singles)]; si += 1
+            cat = cats[ci % len(cats)]; ci += 1
+            plan.append({
+                "time": t, "type": "single", "category": cat, "format": "photo", "platform": plat,
+                "reason": (f"{cat} — a top audience-engagement category (from competitor winners + your own "
+                           f"high-ER posts). Single product as a photo from {plat}; photos convert best for "
+                           f"one-product deals."),
+            })
+    return plan
+
+
 # ── Core (pure) ──────────────────────────────────────────────────────────────
 def compute_strategy(
     inputs: dict,
@@ -484,23 +527,33 @@ def compute_strategy(
     days = _DAYS_BY_TYPE.get(strategy_type, 7)
     pe = date.fromisoformat(period_end) if period_end else ps + timedelta(days=days - 1)
 
-    # build tasks: weighted formats round-robin, topics round-robin
-    format_cycle = _weighted_format_cycle(content_mix)
-    tasks: list[dict] = []
-    fi = ti = 0
-    cur = ps
-    while cur <= pe:
-        for h in slot_hours:
-            tasks.append({
-                "scheduled_date": cur.isoformat(),
-                "scheduled_time": f"{h:02d}:00",
-                "format": format_cycle[fi % len(format_cycle)] if format_cycle else "article",
-                "topic": primary_topics[ti % len(primary_topics)],
-                "kind": None,
-            })
-            fi += 1
-            ti += 1
-        cur += timedelta(days=1)
+    # DEALS (GrabOn): the concrete 50-post/day plan (loot + single, with reasons)
+    # IS the strategy — the dense auto-poster executes it, so we don't create the
+    # generic rule-based slots (which would look vague and double-post).
+    deals_plan: list[dict] = []
+    if is_deals:
+        deals_plan = _build_deals_plan(primary_topics)
+        tasks: list[dict] = []
+    else:
+        # build tasks: weighted formats round-robin, topics round-robin
+        format_cycle = _weighted_format_cycle(content_mix)
+        tasks = []
+        fi = ti = 0
+        cur = ps
+        while cur <= pe:
+            for h in slot_hours:
+                tasks.append({
+                    "scheduled_date": cur.isoformat(),
+                    "scheduled_time": f"{h:02d}:00",
+                    "format": format_cycle[fi % len(format_cycle)] if format_cycle else "article",
+                    "topic": primary_topics[ti % len(primary_topics)],
+                    "kind": None,
+                    "reason": f"{primary_topics[ti % len(primary_topics)]}: chosen from your best-engagement topics; "
+                              f"posted {h:02d}:00 (a peak audience hour).",
+                })
+                fi += 1
+                ti += 1
+            cur += timedelta(days=1)
 
     # Phase 2: execute retention. When there's a retention concern (churn, weak
     # engagement, or a silent community), schedule habit-loop triggers as the
@@ -591,6 +644,7 @@ def compute_strategy(
         "goal": goal,
         "diagnosis": diagnosis,
         "auto_applied": auto_applied,
+        "deals_plan": deals_plan,
         "post_frequency_per_day": freq,
         "content_mix": content_mix,
         "primary_topics": primary_topics,
@@ -688,6 +742,7 @@ async def save_strategy(channel_id: str | uuid.UUID, strategy_payload: dict) -> 
             analysis={
                 "diagnosis": strategy_payload.get("diagnosis"),
                 "auto_applied": strategy_payload.get("auto_applied"),
+                "deals_plan": strategy_payload.get("deals_plan"),
                 "benchmark": strategy_payload.get("benchmark"),
                 "fatigue": strategy_payload.get("fatigue"),
                 "competitor_insights": strategy_payload.get("competitor_insights"),

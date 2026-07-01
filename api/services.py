@@ -187,6 +187,7 @@ async def get_strategy(session: AsyncSession, channel_id: str) -> dict | None:
         "growth_tactics": strat.growth_tactics,
         "diagnosis": (strat.analysis or {}).get("diagnosis"),
         "auto_applied": (strat.analysis or {}).get("auto_applied") or [],
+        "deals_plan": (strat.analysis or {}).get("deals_plan") or [],
         "benchmark": (strat.analysis or {}).get("benchmark"),
         "fatigue": (strat.analysis or {}).get("fatigue"),
         "competitor_insights": (strat.analysis or {}).get("competitor_insights") or [],

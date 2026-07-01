@@ -226,6 +226,30 @@ export default function StrategyPage() {
         </Collapsible>
       )}
 
+      {(data.deals_plan || []).length > 0 && (
+        <Collapsible title={`📅 Daily posting plan — ${(data.deals_plan || []).length} deals (loot + single), 9 AM–12 AM`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs uppercase text-slate-500">
+                <tr><th className="py-2 pr-3">Time</th><th className="pr-3">Type</th><th className="pr-3">Category</th><th className="pr-3">Format</th><th>Why (reason)</th></tr>
+              </thead>
+              <tbody>
+                {(data.deals_plan || []).map((p, i) => (
+                  <tr key={i} className="border-t border-edge align-top">
+                    <td className="py-2 pr-3 whitespace-nowrap font-medium text-slate-800">{p.time}</td>
+                    <td className="pr-3"><Badge tone={p.type === "loot" ? "amber" : "blue"}>{p.type}</Badge></td>
+                    <td className="pr-3 text-slate-700">{p.category}{p.platform ? ` · ${p.platform}` : ""}</td>
+                    <td className="pr-3"><Badge tone="slate">{p.format}</Badge></td>
+                    <td className="text-xs text-slate-500">{p.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Collapsible>
+      )}
+
+      {data.tasks.length > 0 && (
       <Collapsible title={`Post slots (${data.tasks.length})`}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -246,6 +270,7 @@ export default function StrategyPage() {
           </table>
         </div>
       </Collapsible>
+      )}
     </div>
   );
 }
