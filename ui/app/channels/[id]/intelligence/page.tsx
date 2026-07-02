@@ -67,7 +67,7 @@ export default function IntelligencePage() {
       ) : (
         <Section title="Retention plan" desc="Habit-loop triggers the Strategy agent scheduled">
           {data.retention_plan?.length ? (
-            <ol className="relative space-y-3 border-l border-edge pl-5">
+            <ol className="relative max-h-[28rem] space-y-3 overflow-y-auto border-l border-edge pl-5 pr-2">
               {data.retention_plan.map((r, i) => (
                 <li key={i} className="relative">
                   <span className="absolute -left-[22px] top-1.5 h-2.5 w-2.5 rounded-full bg-brand" />
