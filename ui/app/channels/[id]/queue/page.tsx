@@ -17,6 +17,19 @@ function fmtSchedule(iso: string | null): string {
   });
 }
 
+// Collapse a post's review_status + published flag into one workflow state.
+type PostState = "pending" | "approved" | "published" | "rejected";
+function postState(it: QueueItem): PostState {
+  if (it.published) return "published";
+  if (it.review_status === "rejected") return "rejected";
+  if (it.review_status === "approved" || it.review_status === "edited") return "approved";
+  return "pending";
+}
+const STATE_TONE: Record<PostState, "amber" | "blue" | "green" | "red"> = {
+  pending: "amber", approved: "blue", published: "green", rejected: "red",
+};
+const dayOf = (it: QueueItem) => (it.scheduled_at || it.created_at || "").slice(0, 10);
+
 const URL_RE = /(https?:\/\/[^\s]+)/g;
 
 // Render plain text with bare URLs turned into clickable links.
@@ -80,6 +93,14 @@ function PostBody({ text }: { text: string | null }) {
   return <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-slate-800">{linkify(text)}</p>;
 }
 
+const FILTERS: { key: "pending" | "approved" | "published" | "rejected" | "all"; label: string }[] = [
+  { key: "pending", label: "Pending" },
+  { key: "approved", label: "Approved" },
+  { key: "published", label: "Published" },
+  { key: "rejected", label: "Rejected" },
+  { key: "all", label: "All" },
+];
+
 export default function QueuePage() {
   const { id } = useParams<{ id: string }>();
   const [items, setItems] = useState<QueueItem[] | null>(null);
@@ -87,6 +108,8 @@ export default function QueuePage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [page, setPage] = useState(0);
+  const [status, setStatus] = useState<(typeof FILTERS)[number]["key"]>("pending");
+  const [day, setDay] = useState("");
 
   async function load() {
     try { setItems(await api.queue(id)); } catch (e) { setError(String(e)); }
@@ -97,27 +120,61 @@ export default function QueuePage() {
     try { await fn(); await load(); } catch (e) { setError(String(e)); }
   }
 
-  const pageCount = items ? Math.max(1, Math.ceil(items.length / PER_PAGE)) : 1;
-  const pageItems = useMemo(
-    () => (items ? items.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE) : []),
-    [items, page],
+  // Counts per status (for the filter chips) + the set of dates present.
+  const counts = useMemo(() => {
+    const c = { pending: 0, approved: 0, published: 0, rejected: 0, all: 0 };
+    (items || []).forEach((it) => { c[postState(it)]++; c.all++; });
+    return c;
+  }, [items]);
+  const days = useMemo(
+    () => Array.from(new Set((items || []).map(dayOf).filter(Boolean))).sort().reverse(),
+    [items],
   );
-  useEffect(() => { if (page >= pageCount) setPage(0); }, [pageCount, page]);
+
+  const filtered = useMemo(() => {
+    return (items || []).filter((it) =>
+      (status === "all" || postState(it) === status) &&
+      (!day || dayOf(it) === day)
+    );
+  }, [items, status, day]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const pageItems = filtered.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
+  useEffect(() => { setPage(0); }, [status, day]);
 
   if (error) return <ErrorBox error={error} />;
   if (!items) return <Spinner />;
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Content" subtitle="Generated posts awaiting review — previewed exactly as they'll appear on Telegram." />
-      {items.length === 0 ? (
-        <EmptyState title="Queue is empty" hint="Posts appear here ~15–20 min before each slot." />
+      <PageHeader title="Content"
+        subtitle="Generated posts — filter by review state and date. Previewed exactly as they'll appear on Telegram." />
+
+      {/* Status filter + date filter */}
+      <div className="flex flex-wrap items-center gap-2">
+        {FILTERS.map((f) => (
+          <button key={f.key} onClick={() => setStatus(f.key)}
+            className={`rounded-full px-3 py-1 text-sm transition ${status === f.key
+              ? "bg-brand text-white" : "border border-edge bg-panel text-slate-600 hover:bg-slate-50"}`}>
+            {f.label} <span className={status === f.key ? "opacity-80" : "text-slate-400"}>{counts[f.key]}</span>
+          </button>
+        ))}
+        <span className="ml-auto flex items-center gap-2 text-sm">
+          <label className="text-xs text-slate-500">Date</label>
+          <select value={day} onChange={(e) => setDay(e.target.value)}
+            className="rounded-md border border-edge bg-panel px-2 py-1 text-sm text-slate-700 outline-none focus:border-brand">
+            <option value="">All dates</option>
+            {days.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState title="Nothing here" hint="No posts match this filter. Pending posts appear ~15–20 min before each slot." />
       ) : (
       <>
       <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-500">
-          {items.length} post{items.length === 1 ? "" : "s"} awaiting review.
-        </p>
+        <p className="text-xs text-slate-500">{filtered.length} post{filtered.length === 1 ? "" : "s"}</p>
         <span className="text-xs text-slate-400">Page {page + 1} / {pageCount}</span>
       </div>
 
@@ -125,14 +182,15 @@ export default function QueuePage() {
         {pageItems.map((it) => {
           const url = it.link_url || null;
           const cta = it.cta ? it.cta.replace(URL_RE, "").replace(/[:\-–\s]+$/, "").trim() : "";
+          const st = postState(it);
           return (
             <div key={it.generated_post_id}
               className="flex flex-col overflow-hidden rounded-2xl border border-edge bg-panel shadow-card">
               {/* Telegram-style header */}
               <div className="flex items-center gap-2 border-b border-edge bg-slate-50/70 px-4 py-2">
                 <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">TG</span>
-                <span className="text-sm font-medium text-slate-700">Channel preview</span>
                 <Badge tone="blue">{it.post_format}</Badge>
+                <Badge tone={STATE_TONE[st]}>{st}</Badge>
                 <span className="ml-auto inline-flex items-center rounded-md bg-white px-2 py-0.5 text-xs font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
                   🗓 {fmtSchedule(it.scheduled_at)}
                   <InfoTooltip text="When this post publishes. Deal posts are generated ~15–20 min before their slot so the offer is still live." />
@@ -165,25 +223,27 @@ export default function QueuePage() {
                 )}
               </div>
 
-              {/* Actions */}
-              <div className="flex gap-2 border-t border-edge px-4 py-3">
-                {editing === it.generated_post_id ? (
-                  <>
-                    <button onClick={() => act(async () => { await api.edit(id, it.generated_post_id, draft); setEditing(null); })}
-                      className="rounded-md bg-brand px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700">Save</button>
-                    <button onClick={() => setEditing(null)} className="rounded-md border border-edge bg-panel px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50">Cancel</button>
-                  </>
-                ) : (
-                  <>
-                    <button onClick={() => act(() => api.approve(id, it.generated_post_id))}
-                      className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-green-700">✅ Approve</button>
-                    <button onClick={() => { setEditing(it.generated_post_id); setDraft(it.post_text || ""); }}
-                      className="rounded-md border border-edge bg-panel px-3 py-1.5 text-sm text-slate-700 transition hover:border-brand hover:text-brand">✏️ Edit</button>
-                    <button onClick={() => act(() => api.reject(id, it.generated_post_id))}
-                      className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-red-700">❌ Reject</button>
-                  </>
-                )}
-              </div>
+              {/* Actions — only for posts still awaiting review */}
+              {st === "pending" && (
+                <div className="flex gap-2 border-t border-edge px-4 py-3">
+                  {editing === it.generated_post_id ? (
+                    <>
+                      <button onClick={() => act(async () => { await api.edit(id, it.generated_post_id, draft); setEditing(null); })}
+                        className="rounded-md bg-brand px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-blue-700">Save</button>
+                      <button onClick={() => setEditing(null)} className="rounded-md border border-edge bg-panel px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50">Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => act(() => api.approve(id, it.generated_post_id))}
+                        className="rounded-md bg-green-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-green-700">✅ Approve</button>
+                      <button onClick={() => { setEditing(it.generated_post_id); setDraft(it.post_text || ""); }}
+                        className="rounded-md border border-edge bg-panel px-3 py-1.5 text-sm text-slate-700 transition hover:border-brand hover:text-brand">✏️ Edit</button>
+                      <button onClick={() => act(() => api.reject(id, it.generated_post_id))}
+                        className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:bg-red-700">❌ Reject</button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

@@ -21,6 +21,7 @@ from db.models import (
     Competitor,
     GeneratedPost,
     PostQueue,
+    QueueStatus,
     ReviewStatus,
     RunStatus,
     SnapshotType,
@@ -105,13 +106,17 @@ async def build_dashboard(session: AsyncSession, channel_id: str) -> dict:
 
 
 async def get_queue(session: AsyncSession, channel_id: str) -> list[dict]:
+    """Recent generated posts of ALL review states (pending/approved/edited/
+    rejected) + whether each was actually published (its queue row is 'sent').
+    The Content page filters these by status and date client-side."""
     cid = _uid(channel_id)
     rows = (
         await session.execute(
-            select(GeneratedPost, PostQueue.scheduled_at)
+            select(GeneratedPost, PostQueue.scheduled_at, PostQueue.status)
             .join(PostQueue, PostQueue.generated_post_id == GeneratedPost.id, isouter=True)
-            .where(GeneratedPost.channel_id == cid, GeneratedPost.review_status == ReviewStatus.pending)
-            .order_by(PostQueue.scheduled_at.asc().nulls_last(), GeneratedPost.created_at.desc())
+            .where(GeneratedPost.channel_id == cid)
+            .order_by(GeneratedPost.created_at.desc())
+            .limit(300)
         )
     ).all()
     return [
@@ -125,10 +130,11 @@ async def get_queue(session: AsyncSession, channel_id: str) -> list[dict]:
             "cta": r.cta,
             "hashtags": r.hashtags,
             "review_status": r.review_status.value,
+            "published": qstatus == QueueStatus.sent,
             "scheduled_at": scheduled_at.isoformat() if scheduled_at else None,
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
-        for r, scheduled_at in rows
+        for r, scheduled_at, qstatus in rows
     ]
 
 

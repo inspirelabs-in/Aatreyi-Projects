@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { Strategy } from "@/lib/types";
-import { Badge, EmptyState, ErrorBox, Pagination, PageHeader, Section, Spinner, Stat, Tabs } from "@/components/ui";
+import { Badge, EmptyState, ErrorBox, InfoTooltip, Pagination, PageHeader, Section, Spinner, Stat, Tabs } from "@/components/ui";
 import { Donut } from "@/components/charts";
 
 const PER_PAGE = 8;
@@ -16,6 +16,7 @@ export default function StrategyPage() {
   const [notFound, setNotFound] = useState(false);
   const [page, setPage] = useState(0);
   const [tab, setTab] = useState("");
+  const [planDay, setPlanDay] = useState("");
 
   useEffect(() => {
     api.strategy(id).then(setData).catch((e) => {
@@ -31,8 +32,17 @@ export default function StrategyPage() {
   const mediaMix = useMemo(() => (profile?.media_mix || []).map((m) => ({ name: m.media, value: m.pct })), [profile]);
 
   const tasks = data?.tasks || [];
-  const pageCount = Math.max(1, Math.ceil(tasks.length / PER_PAGE));
-  const pageTasks = tasks.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
+  const planDays = useMemo(
+    () => Array.from(new Set(tasks.map((t) => t.date).filter(Boolean) as string[])).sort(),
+    [tasks],
+  );
+  const filteredTasks = useMemo(
+    () => tasks.filter((t) => !planDay || t.date === planDay),
+    [tasks, planDay],
+  );
+  const pageCount = Math.max(1, Math.ceil(filteredTasks.length / PER_PAGE));
+  const pageTasks = filteredTasks.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
+  useEffect(() => { setPage(0); }, [planDay]);
 
   if (error) return <ErrorBox error={error} />;
   if (notFound) return <div><PageHeader title="Strategy" /><EmptyState title="No active strategy yet" hint="Run the Strategy agent to generate the plan." /></div>;
@@ -76,7 +86,9 @@ export default function StrategyPage() {
       {active === "overview" && (
         <div className="mt-4 space-y-4">
           {profile && (
-            <Section title={`Inferred strategy — ${profile.planner === "dense" ? "dense (high-volume)" : "curated"} profile`}
+            <Section
+              title={<span className="inline-flex items-center">Inferred strategy — {profile.planner === "dense" ? "dense (high-volume)" : "curated"} profile
+                <InfoTooltip text="The posting profile the agent inferred for this niche from your history + competitors: how many posts/day, the timing window, and the content/media mix. Nothing is hardcoded per category." /></span>}
               desc={profile.rationale}>
               <div className="grid gap-4 lg:grid-cols-3">
                 <div className="grid grid-cols-1 gap-3">
@@ -93,7 +105,8 @@ export default function StrategyPage() {
             </Section>
           )}
           {(data.primary_topics?.length || 0) > 0 && (
-            <Section title="Focus topics">
+            <Section title={<span className="inline-flex items-center">Focus topics
+              <InfoTooltip text="The topics/categories the plan emphasises, derived from your channel's best-performing content and competitor gaps." /></span>}>
               <div className="flex flex-wrap gap-2">{data.primary_topics!.map((t) => <Badge key={t} tone="green">{t}</Badge>)}</div>
             </Section>
           )}
@@ -102,22 +115,34 @@ export default function StrategyPage() {
 
       {active === "plan" && tasks.length > 0 && (
         <div className="mt-4">
-          <Section title={`Execution plan — ${tasks.length} slots`}
-            desc="Each slot is scraped ~15–20 min before its time, captioned, then queued. Every slot has an evidence-based reason.">
+          <Section
+            title={<span className="inline-flex items-center">Execution plan — {filteredTasks.length} slots
+              <InfoTooltip text="Slots the Strategy agent scheduled. Each one is scraped ~15–20 min before its time, captioned by the Content generator, then queued. Every slot carries an evidence-based reason." /></span>}
+            desc="Each slot is scraped ~15–20 min before its time, captioned, then queued. Every slot has an evidence-based reason."
+            actions={
+              <span className="flex items-center gap-2 text-sm">
+                <label className="text-xs text-slate-500">Date</label>
+                <select value={planDay} onChange={(e) => setPlanDay(e.target.value)}
+                  className="rounded-md border border-edge bg-panel px-2 py-1 text-sm text-slate-700 outline-none focus:border-brand">
+                  <option value="">All dates</option>
+                  {planDays.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </span>
+            }>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-xs uppercase text-slate-500">
-                  <tr><th className="py-2 pr-3">Scrape</th><th className="pr-3">Post</th><th className="pr-3">Type</th><th className="pr-3">Topic</th><th className="pr-3">Market</th><th className="pr-3">Status</th><th>Reason</th></tr>
+                  <tr><th className="py-2 pr-3">Date</th><th className="pr-3">Scrape</th><th className="pr-3">Post</th><th className="pr-3">Type</th><th className="pr-3">Topic</th><th className="pr-3">Market</th><th>Reason</th></tr>
                 </thead>
                 <tbody>
                   {pageTasks.map((t) => (
                     <tr key={t.task_id} className="border-t border-edge align-top">
-                      <td className="py-2 pr-3 whitespace-nowrap text-xs text-slate-500">{t.scrape_at?.slice(0, 5) || "—"}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap text-xs text-slate-500">{t.date || "—"}</td>
+                      <td className="pr-3 whitespace-nowrap text-xs text-slate-500">{t.scrape_at?.slice(0, 5) || "—"}</td>
                       <td className="pr-3 whitespace-nowrap font-medium text-slate-800">{t.time?.slice(0, 5)}</td>
                       <td className="pr-3"><Badge tone={t.kind === "loot" ? "amber" : "blue"}>{t.kind || t.format}</Badge></td>
                       <td className="pr-3 text-slate-700">{t.topic}</td>
                       <td className="pr-3 text-slate-700">{t.marketplace || "—"}</td>
-                      <td className="pr-3"><Badge tone="amber">{t.status}</Badge></td>
                       <td className="whitespace-pre-line text-xs text-slate-500 min-w-[20rem]">{t.rationale}</td>
                     </tr>
                   ))}
@@ -130,7 +155,10 @@ export default function StrategyPage() {
       )}
 
       {active === "competitors" && hasCI && (
-        <div className="mt-4"><Section title="Competitor intelligence" desc="Facts guiding the plan (never copied)">
+        <div className="mt-4"><Section
+          title={<span className="inline-flex items-center">Competitor intelligence
+            <InfoTooltip text="Facts aggregated from competitor channels (posting times, formats, CTAs, themes) used only as guidance for the plan — never copied into your posts." /></span>}
+          desc="Facts guiding the plan (never copied)">
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
               <p className="mb-1 text-xs font-medium uppercase text-slate-400">Opportunities</p>
@@ -149,7 +177,9 @@ export default function StrategyPage() {
       )}
 
       {active === "why" && (data.growth_tactics?.length || 0) > 0 && (
-        <div className="mt-4"><Section title="Why this plan — diagnosis & actions">
+        <div className="mt-4"><Section
+          title={<span className="inline-flex items-center">Why this plan — diagnosis & actions
+            <InfoTooltip text="The agent's diagnosis of what's holding growth/engagement back and the specific actions this plan takes to fix it, each with a severity." /></span>}>
           <ul className="space-y-3">
             {data.growth_tactics!.map((g, i) => (
               <li key={i} className="rounded-lg border border-edge bg-field/40 p-3">
