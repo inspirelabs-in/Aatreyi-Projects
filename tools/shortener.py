@@ -36,9 +36,17 @@ async def shorten_url(url: str) -> str:
         return cached
     try:
         import httpx
+        # Browser-like headers so Cloudflare's bot check doesn't reject the call.
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+            "Origin": "https://grabon.in",
+            "Referer": "https://grabon.in/",
+        }
         async with httpx.AsyncClient(timeout=8.0) as c:
-            r = await c.post(api, json={"originalUrl": url},
-                             headers={"Content-Type": "application/json"})
+            r = await c.post(api, json={"originalUrl": url}, headers=headers)
             if r.status_code < 400:
                 short = ((r.json() or {}).get("data") or {}).get("shortUrl")
                 if short:

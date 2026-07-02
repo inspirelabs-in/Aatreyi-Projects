@@ -96,11 +96,11 @@ class Settings(BaseSettings):
     DEAL_MAX_DISCOUNT: int = Field(default=95)
     # GrabOn URL shortener: after affiliate-link generation, deal links are shortened
     # to grbn.in via this API and the short link is what goes in the post. Empty = off.
-    # GrabOn URL shortener (grbn.in). OFF by default: the public endpoint is behind
-    # Cloudflare and blocks datacenter/programmatic calls, so shortening fails open to
-    # the raw affiliate link. Set this env var to a working endpoint (with an API key /
-    # IP allowlist arranged) to re-enable. Empty/non-http => shortener is skipped.
-    SHORTENER_API_URL: str = Field(default="")
+    # GrabOn URL shortener (grbn.in). The endpoint is behind Cloudflare; we send
+    # browser-like headers to pass its bot check. If a datacenter call is still
+    # blocked, shortening fails open to the raw affiliate link (never breaks a post).
+    # Empty/non-http => shortener is skipped.
+    SHORTENER_API_URL: str = Field(default="https://shortner-api.grabon.com/api/url/shorten")
     # Platforms to scrape and how many deals per category to keep.
     # Ajio is wired (scrape_ajio + ajio_kw) but Akamai-blocked, so it's OFF by
     # default — add "Ajio" here once an affiliate feed / anti-bot fetch is set up.
