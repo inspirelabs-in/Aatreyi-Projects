@@ -79,6 +79,20 @@ async def execute_deal_slot(
         ranked = rank_deals(deals, preferred_categories=preferred_categories,
                             trending_categories=trending_categories)
         post = build_loot_post(ranked, seen, recent_urls) if ranked else None
+        # Swap the templated header/outro for an original, on-brand line written from
+        # the channel's tone + competitor energy (varied every post). Fail-open.
+        if post:
+            try:
+                from tools.content import generate_loot_intro
+                from tools.strategy_context import build_strategy_context
+                ctx = await build_strategy_context(cid)
+                intro = await generate_loot_intro(ctx, task.get("rationale"))
+                if intro and intro.get("header"):
+                    post["post_text"] = post["post_text"].replace(post["header"], intro["header"], 1)
+                    if intro.get("outro") and post.get("outro"):
+                        post["post_text"] = post["post_text"].replace(post["outro"], intro["outro"], 1)
+            except Exception:
+                pass
     else:
         # SINGLE: scrape the assigned category+marketplace first (targeted, deeper
         # so ranking has real choices). A single category/marketplace often yields

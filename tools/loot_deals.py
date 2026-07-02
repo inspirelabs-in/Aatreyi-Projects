@@ -19,6 +19,7 @@ only — scraping, publishing and scheduling live elsewhere.
 from __future__ import annotations
 
 import html as _html
+import random
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -41,6 +42,40 @@ LOOT_BUCKETS: list[tuple[str, set[str]]] = [
     ("🏠 HOME & KITCHEN",   {"Home & Kitchen", "Home Decor", "Grocery"}),
     ("🧸 TOYS & SPORTS",    {"Toys & Kids", "Sports"}),
 ]
+
+
+# Varied loot headers/outros so every post isn't "{greeting} Loot Deals". Some use
+# the time-of-day greeting ({g}), most don't — picked with light rotation so
+# consecutive posts differ. The executor may replace these with an LLM-written,
+# on-brand line (shaped by the channel's own tone + competitor energy).
+_LOOT_HEADERS = [
+    "🔥🔥 {g} Loot Deals 🔥🔥",
+    "⚡ {g} Steal Deals — Grab Fast! ⚡",
+    "💥 Today's Best Loot is Here 💥",
+    "🛍️ Handpicked Deals You'll Love 🛍️",
+    "🤑 Lowest Prices Right Now 🤑",
+    "🚨 Deal Drop Alert — Limited Stock 🚨",
+    "✨ Fresh Loot, Freshly Dropped ✨",
+    "🎯 Top Picks at Crazy Prices 🎯",
+    "🔥 {g} Deal Bonanza 🔥",
+    "💸 Save Big on These Today 💸",
+    "🛒 Loot Alert — Don't Sleep on These 🛒",
+    "🏷️ Massive Markdowns, {g} Edition 🏷️",
+]
+_LOOT_OUTROS = [
+    "🛍️ Tap any item to grab the deal!",
+    "⚡ Hurry — prices this low never last!",
+    "👆 Tap a deal before it's gone!",
+    "🔥 Grab yours before stock runs out!",
+    "💯 Handpicked for you — tap to shop!",
+    "🚀 Limited stock — tap fast!",
+]
+
+
+def _pick_line(pool: list[str], now: datetime) -> str:
+    """Pick a line from a pool with light per-post rotation (seeded on the minute
+    so back-to-back posts differ but it's deterministic within a minute)."""
+    return random.Random(int(now.timestamp()) // 60).choice(pool)
 
 
 def greeting(now: datetime) -> str:
@@ -102,7 +137,8 @@ def _label(deal: dict, max_len: int = 60) -> str:
 
 
 def build_loot_post(
-    deals: list[dict], seen: list[frozenset], recent_urls: set[str] | None = None
+    deals: list[dict], seen: list[frozenset], recent_urls: set[str] | None = None,
+    header: str | None = None, outro: str | None = None,
 ) -> dict | None:
     """Compose a loot post from the deal pool, grouped by bucket, skipping products
     already posted recently (``seen`` title fingerprints + ``recent_urls`` product
@@ -152,9 +188,11 @@ def build_loot_post(
     # (>=3 links) is enough. Only bail when there's essentially nothing to show.
     if len(sections) < 1 or len(used) < 3:
         return None
-    text = f"🔥🔥 {greeting(now)} Loot Deals 🔥🔥\n\n" + "\n\n".join(sections)
-    text += "\n\n🛍️ Tap any item to grab the deal!"
-    return {"post_text": text, "post_format": "text", "parse_mode": "HTML", "used": used}
+    header = (header or _pick_line(_LOOT_HEADERS, now)).replace("{g}", greeting(now))
+    outro = outro or _pick_line(_LOOT_OUTROS, now)
+    text = f"{header}\n\n" + "\n\n".join(sections) + f"\n\n{outro}"
+    return {"post_text": text, "post_format": "text", "parse_mode": "HTML",
+            "used": used, "header": header, "outro": outro}
 
 
 def build_single_deal_post(

@@ -1008,6 +1008,47 @@ async def generate_deal_caption(deal: dict, strategy_context: dict | None = None
         return None
 
 
+async def generate_loot_intro(strategy_context: dict | None = None,
+                              slot_reason: str | None = None) -> dict[str, Any] | None:
+    """Original, on-brand header + closing line for a LOOT compilation post, shaped
+    by the channel's own tone + competitor energy (strategy context). Returns
+    {header, outro} or None on any failure (caller falls back to the varied pool).
+
+    The header must NOT be the same every time — it replaces the templated
+    "{greeting} Loot Deals" so the channel doesn't read as a broken record."""
+    if not getattr(settings, "GROQ_API_KEY", None):
+        return None
+    from tools.strategy_context import strategy_context_prompt
+    ctx_block = strategy_context_prompt(strategy_context, slot_reason)
+    system = ("You write ORIGINAL, catchy copy for a broadcast Telegram DEALS/LOOT channel. "
+              "A loot post lists many discounted products under category headings; you only write "
+              "the top HEADER line and a short closing OUTRO line. Vary the wording every time — "
+              "never reuse a stock phrase. Punchy, high-energy, 1-3 emojis, on-brand. Never ask the "
+              "audience anything (they can't reply) and never write a URL. Output STRICT JSON: "
+              "{\"header\": <one line>, \"outro\": <one short line>}.")
+    user = (f"{ctx_block}\n"
+            "Write a FRESH header + outro for today's loot deals compilation. Match the channel's "
+            "tone and the competitors' energy, but original copy — do NOT copy any competitor text. "
+            "Return ONLY the JSON.")
+    try:
+        raw = await chat_complete(system, user, max_tokens=120, temperature=0.9)
+        import json as _json
+        s = (raw or "").strip()
+        if "```" in s:
+            s = s.split("```")[1].replace("json", "", 1) if s.count("```") >= 2 else s
+        start, end = s.find("{"), s.rfind("}")
+        if start < 0 or end < 0:
+            return None
+        data = _json.loads(s[start:end + 1])
+        header = _clean_text(_sanitize_urls(str(data.get("header") or "").strip(), None))
+        outro = _clean_text(_sanitize_urls(str(data.get("outro") or "").strip(), None))
+        if not header:
+            return None
+        return {"header": header, "outro": outro or None}
+    except Exception:
+        return None
+
+
 async def generate_post(content_item: dict, task: dict, channel_dna: dict,
                         strategy_context: dict | None = None) -> dict[str, Any]:
     return await _generate(task, channel_dna, content_item, is_original=False,
