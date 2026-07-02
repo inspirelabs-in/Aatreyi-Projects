@@ -101,13 +101,17 @@ def _label(deal: dict, max_len: int = 60) -> str:
     return f"{title} ({pct}% OFF)" if pct else title
 
 
-def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
+def build_loot_post(
+    deals: list[dict], seen: list[frozenset], recent_urls: set[str] | None = None
+) -> dict | None:
     """Compose a loot post from the deal pool, grouped by bucket, skipping products
-    already posted recently (``seen`` fingerprints). Returns
-    {post_text(HTML), used} or None if too few fresh deals."""
+    already posted recently (``seen`` title fingerprints + ``recent_urls`` product
+    links). Returns {post_text(HTML), used} or None if too few fresh deals."""
     now = datetime.now(_LOCAL_TZ)
     used_fps = list(seen)
-    seen_urls: set[str] = set()  # no repeated product links within the post
+    recent = recent_urls or set()
+    seen_urls: set[str] = set()      # no repeated product link within the post
+    seen_labels: set[str] = set()    # no two identical-looking lines ("Dervin (80% OFF)")
     sections: list[str] = []
     used: list[dict] = []
     for heading, cats in LOOT_BUCKETS:
@@ -122,18 +126,25 @@ def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
             url = (d.get("affiliate_url") or d.get("product_url") or "").strip()
             if not url:
                 continue
-            # Dedup by URL (base, ignoring query) AND by title so the same product
-            # can never appear twice in one loot post.
-            url_key = url.split("?")[0].rstrip("/").lower()
-            if url_key in seen_urls:
+            # Dedup by URL (within post AND across recent posts), by visible label,
+            # and by title — so the same product/link never repeats. The label guard
+            # is key because scraped titles are often just a brand ("Dervin"), which
+            # the fingerprint dedup can't judge, making two lines look identical.
+            uk = url.split("?")[0].rstrip("/").lower()
+            if uk in seen_urls or uk in recent:
                 continue
             if is_junk_title(d.get("title")):
                 continue
+            label = _label(d)
+            label_key = label.lower()
+            if label_key in seen_labels:
+                continue
             if is_title_dupe(d.get("title"), used_fps):
                 continue
-            lines.append(f'• <a href="{_html.escape(url, quote=True)}">{_html.escape(_label(d))}</a>')
+            lines.append(f'• <a href="{_html.escape(url, quote=True)}">{_html.escape(label)}</a>')
             used.append(d)
-            seen_urls.add(url_key)
+            seen_urls.add(uk)
+            seen_labels.add(label_key)
             used_fps.append(_title_fingerprint(d.get("title")))
         if lines:
             sections.append(f"<b>{heading}</b>\n" + "\n".join(lines))
@@ -147,7 +158,8 @@ def build_loot_post(deals: list[dict], seen: list[frozenset]) -> dict | None:
 
 
 def build_single_deal_post(
-    deals: list[dict], platform: str, seen: list[frozenset], prefer_ranked: bool = False
+    deals: list[dict], platform: str, seen: list[frozenset],
+    prefer_ranked: bool = False, recent_urls: set[str] | None = None,
 ) -> dict | None:
     """Pick the best fresh single-product deal for ``platform`` and compose a
     photo post with an affiliate button. None if no fresh deal.
@@ -155,9 +167,13 @@ def build_single_deal_post(
     When ``prefer_ranked`` is set, ``deals`` is assumed already sorted best-first
     (by the executor's ranker: discount + engagement + trend + stock) and the
     incoming order is honoured instead of re-sorting by raw discount."""
+    recent = recent_urls or set()
+    def _fresh_url(d: dict) -> bool:
+        u = (d.get("affiliate_url") or d.get("product_url") or "").split("?")[0].rstrip("/").lower()
+        return bool(u) and u not in recent
     cands = [d for d in deals
              if (d.get("platform") == platform)
-             and (d.get("affiliate_url") or d.get("product_url"))
+             and _fresh_url(d)
              and not is_junk_title(d.get("title"))
              and not is_title_dupe(d.get("title"), seen)]
     if not cands:

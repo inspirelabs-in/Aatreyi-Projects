@@ -476,6 +476,36 @@ async def recent_title_fingerprints(channel_id: str | uuid.UUID) -> list[frozens
     return [fp for t in titles if (fp := _title_fingerprint(t))]
 
 
+def url_key(url: str | None) -> str:
+    """Normalise a product URL to a comparison key (drop query string + trailing
+    slash). The same product across posts shares this key even when affiliate
+    query params differ."""
+    return (url or "").split("?")[0].rstrip("/").lower()
+
+
+async def recent_deal_urls(channel_id: str | uuid.UUID, days: int | None = None) -> set[str]:
+    """Normalised product URLs already posted on this channel in the window.
+
+    Product titles are often just a brand token ("Dervin") which the title-based
+    dedup can't judge (len<2), so the SAME product reappears in every loot post.
+    URL is a reliable identity that doesn't depend on title quality. Uses a SHORT
+    window (DEAL_URL_DEDUP_DAYS) so the finite fresh-deal pool still recycles."""
+    cid = uuid.UUID(str(channel_id))
+    window = days if days is not None else settings.DEAL_URL_DEDUP_DAYS
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window)
+    async with AsyncSessionLocal() as session:
+        urls = (
+            await session.execute(
+                select(ContentItem.external_url).where(
+                    ContentItem.channel_id == cid,
+                    ContentItem.fetched_at >= cutoff,
+                    ContentItem.external_url.isnot(None),
+                )
+            )
+        ).scalars().all()
+    return {k for u in urls if (k := url_key(u))}
+
+
 def is_title_dupe(title: str | None, seen: list[frozenset], threshold: float = 0.6) -> bool:
     """True if `title` is the same product as a recently-posted one. Uses the
     OVERLAP COEFFICIENT (|A∩B| / min(|A|,|B|)) so a shorter re-listing of the same

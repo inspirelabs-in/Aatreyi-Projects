@@ -23,7 +23,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from tools.content import add_to_review_queue, maybe_auto_publish, recent_title_fingerprints
+from tools.content import (
+    add_to_review_queue,
+    maybe_auto_publish,
+    recent_deal_urls,
+    recent_title_fingerprints,
+)
 from tools.deal_ranking import is_reachable, rank_deals
 from tools.deal_scrapers import get_fresh_deals, resolve_deal_categories
 from tools.loot_deals import build_loot_post, build_single_deal_post
@@ -67,12 +72,13 @@ async def execute_deal_slot(
     marketplace = task.get("marketplace")
 
     seen = await recent_title_fingerprints(cid)
+    recent_urls = await recent_deal_urls(cid)  # cross-post URL dedup (no repeats)
     if kind == "loot":
         # LOOT: broad pull across all categories + both marketplaces → aggregate.
         deals = await get_fresh_deals()
         ranked = rank_deals(deals, preferred_categories=preferred_categories,
                             trending_categories=trending_categories)
-        post = build_loot_post(ranked, seen) if ranked else None
+        post = build_loot_post(ranked, seen, recent_urls) if ranked else None
     else:
         # SINGLE: scrape the assigned category+marketplace first (targeted, deeper
         # so ranking has real choices). A single category/marketplace often yields
@@ -84,17 +90,17 @@ async def execute_deal_slot(
         deals = await get_fresh_deals(platforms=[plat], categories=cats, max_per_category=6)
         ranked = rank_deals(deals, preferred_categories=preferred_categories,
                             trending_categories=trending_categories, platform=plat)
-        post = build_single_deal_post(ranked, plat, seen, prefer_ranked=True) if ranked else None
+        post = build_single_deal_post(ranked, plat, seen, prefer_ranked=True, recent_urls=recent_urls) if ranked else None
         if not post:
             broad = await get_fresh_deals()  # both marketplaces, all categories (cached)
             ranked = rank_deals(broad, preferred_categories=preferred_categories,
                                 trending_categories=trending_categories, platform=plat)
-            post = build_single_deal_post(ranked, plat, seen, prefer_ranked=True) if ranked else None
+            post = build_single_deal_post(ranked, plat, seen, prefer_ranked=True, recent_urls=recent_urls) if ranked else None
         # stock best-effort: only a definitive 404/410 drops the pick; retry once.
         if post and not await is_reachable(post.get("link_url") or ""):
             dead = {(d.get("title") or "") for d in post.get("used", [])}
             retry = [d for d in ranked if (d.get("title") or "") not in dead]
-            post = build_single_deal_post(retry, plat, seen, prefer_ranked=True)
+            post = build_single_deal_post(retry, plat, seen, prefer_ranked=True, recent_urls=recent_urls)
     if not post:
         log.info("deal slot %s: no fresh %s deal after ranking", task.get("id"), kind)
         return None

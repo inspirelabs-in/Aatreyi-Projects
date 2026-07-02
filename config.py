@@ -124,6 +124,11 @@ class Settings(BaseSettings):
     # No-repeat window: a deal/article URL — and, for deals, the same product
     # (by title) — won't be reposted on a channel within this many days.
     DEDUP_WINDOW_DAYS: int = Field(default=30)
+    # Deals-only URL no-repeat window. Kept SHORT because a high-volume deals
+    # channel (50 posts/day) draws from a finite fresh-deal pool — a 30-day URL
+    # block would exhaust it and stall posting. This just stops a product from
+    # reappearing in back-to-back posts; it recycles after a few days.
+    DEAL_URL_DEDUP_DAYS: int = Field(default=3)
 
     # ── Content scoring defaults ─────────────────────────────────────────────
     SCORE_THRESHOLD: int = Field(default=4)
