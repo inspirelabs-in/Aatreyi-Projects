@@ -45,7 +45,12 @@ async def shorten_url(url: str) -> str:
             "Origin": "https://grabon.in",
             "Referer": "https://grabon.in/",
         }
-        async with httpx.AsyncClient(timeout=8.0) as c:
+        # grbn.in's Cloudflare blocks datacenter IPs (403). Route through the same
+        # residential proxy the scrapers use when it's configured, so the call
+        # originates from an allowed IP.
+        proxy = getattr(settings, "SCRAPER_PROXY", None)
+        kw = {"proxy": proxy} if proxy else {}
+        async with httpx.AsyncClient(timeout=8.0, **kw) as c:
             r = await c.post(api, json={"originalUrl": url}, headers=headers)
             if r.status_code < 400:
                 short = ((r.json() or {}).get("data") or {}).get("shortUrl")
