@@ -1,7 +1,7 @@
 # Telegram Growth & Retention Agent
 
 Autonomous multi-agent system that profiles a Telegram channel, scouts competitors,
-tracks analytics, plans a posting strategy, and sources/generates posts for review.
+tracks analytics, plans a posting strategy, and sources/generates posts for review!!
 
 See the design docs at the repo root:
 [workflow.md](workflow.md) · [db_schema.md](db_schema.md) · [formulae.md](formulae.md) ·
