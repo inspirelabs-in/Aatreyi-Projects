@@ -477,11 +477,15 @@ def _build_dense_plan(profile: dict, period_date: date) -> list[dict[str, Any]]:
                 "marketplace": None, "media_type": "none", "priority": base_priority + 2,
             })
         else:
-            plat = singles[si % len(singles)]; si += 1
+            plat = singles[si % len(singles)]
+            # Alternate single-product posts between photo and text-only for format
+            # variety (photo spotlights the product; text is a compact link post).
+            fmt = "text" if (si % 2 == 1) else "photo"
+            si += 1
             plan.append({
                 "scheduled_date": date_iso, "scheduled_time": t, "scrape_at": scrape_at,
-                "kind": "single", "format": "photo", "topic": None,
-                "marketplace": plat, "media_type": "photo", "priority": base_priority + 1,
+                "kind": "single", "format": fmt, "topic": None,
+                "marketplace": plat, "media_type": fmt, "priority": base_priority + 1,
             })
     return plan
 

@@ -96,7 +96,8 @@ def _deals_profile(category: str | None, signals: dict) -> dict[str, Any]:
         ],
         "media_mix": [
             {"media": "none (loot)", "pct": round(loot / total * 100)},
-            {"media": "photo (single)", "pct": round(single / total * 100)},
+            {"media": "photo (single)", "pct": round((single + 1) // 2 / total * 100)},
+            {"media": "text (single)", "pct": round(single // 2 / total * 100)},
         ],
         "timing": {"mode": "window", "window": [start, end], "peak_hours": peak,
                    "peak_source": signals.get("peak_source") or "competitor",
@@ -121,8 +122,8 @@ def _deals_profile(category: str | None, signals: dict) -> dict[str, Any]:
             f"deeply-discounted products, so the winning strategy is DENSE posting — "
             f"{total} posts/day across {start:02d}:00–{(end + 1) % 24 or 24:02d}:00. "
             f"{loot} loot compilations (many clickable links, no image) give breadth; "
-            f"{single} single-product photo posts spotlight standout deals "
-            f"(split {single_amazon} Amazon / {single_flipkart} Flipkart)"
+            f"{single} single-product posts (a mix of photo and text-only) spotlight "
+            f"standout deals (split {single_amazon} Amazon / {single_flipkart} Flipkart)"
             + (" — scaled to your organization's daily target" if target else "")
             + ". Every deal is scraped just-in-time so prices/stock are live."
         ),

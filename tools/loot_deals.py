@@ -160,9 +160,14 @@ def build_loot_post(
 def build_single_deal_post(
     deals: list[dict], platform: str, seen: list[frozenset],
     prefer_ranked: bool = False, recent_urls: set[str] | None = None,
+    want_format: str | None = None,
 ) -> dict | None:
-    """Pick the best fresh single-product deal for ``platform`` and compose a
-    photo post with an affiliate button. None if no fresh deal.
+    """Pick the best fresh single-product deal for ``platform`` and compose a post
+    with an affiliate button. None if no fresh deal.
+
+    ``want_format`` (from the slot's media_type): "text" => a compact text-only post
+    (no image, link on the button); "photo" => image post (falls back to text when
+    the product has no image). Default honours whatever image is available.
 
     When ``prefer_ranked`` is set, ``deals`` is assumed already sorted best-first
     (by the executor's ranker: discount + engagement + trend + stock) and the
@@ -189,10 +194,13 @@ def build_single_deal_post(
     head = f"🔥 {title}"
     body = f"{head}\n\n💸 {price_bit}" + (f"  •  {pct}% OFF" if pct else "")
     url = (d.get("affiliate_url") or d.get("product_url") or "").strip()
+    # Text slots (want_format="text") post without an image — the affiliate link
+    # rides on the inline button. Photo slots use the image, falling back to text.
+    use_photo = bool(d.get("image_url")) and want_format != "text"
     return {
         "post_text": body,
-        "post_format": "photo" if d.get("image_url") else "text",
-        "media_url": d.get("image_url"),
+        "post_format": "photo" if use_photo else "text",
+        "media_url": d.get("image_url") if use_photo else None,
         "link_url": url,
         "cta": "🛒 Grab Deal",
         "used": [d],

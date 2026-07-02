@@ -86,21 +86,24 @@ async def execute_deal_slot(
         # bogus >95% discount (dropped by the sanity cap) — so if the assignment is
         # dry, fall back to the marketplace's best deal from the broad (cached) pool.
         plat = marketplace or "Amazon"
+        # Honour the slot's planned media type: "text" => text-only single-deal
+        # (link on the button), else a photo post. Gives a photo/text mix.
+        want_format = "text" if (task.get("media_type") or task.get("format")) == "text" else "photo"
         cats = resolve_deal_categories(category) or None
         deals = await get_fresh_deals(platforms=[plat], categories=cats, max_per_category=6)
         ranked = rank_deals(deals, preferred_categories=preferred_categories,
                             trending_categories=trending_categories, platform=plat)
-        post = build_single_deal_post(ranked, plat, seen, prefer_ranked=True, recent_urls=recent_urls) if ranked else None
+        post = build_single_deal_post(ranked, plat, seen, prefer_ranked=True, recent_urls=recent_urls, want_format=want_format) if ranked else None
         if not post:
             broad = await get_fresh_deals()  # both marketplaces, all categories (cached)
             ranked = rank_deals(broad, preferred_categories=preferred_categories,
                                 trending_categories=trending_categories, platform=plat)
-            post = build_single_deal_post(ranked, plat, seen, prefer_ranked=True, recent_urls=recent_urls) if ranked else None
+            post = build_single_deal_post(ranked, plat, seen, prefer_ranked=True, recent_urls=recent_urls, want_format=want_format) if ranked else None
         # stock best-effort: only a definitive 404/410 drops the pick; retry once.
         if post and not await is_reachable(post.get("link_url") or ""):
             dead = {(d.get("title") or "") for d in post.get("used", [])}
             retry = [d for d in ranked if (d.get("title") or "") not in dead]
-            post = build_single_deal_post(retry, plat, seen, prefer_ranked=True, recent_urls=recent_urls)
+            post = build_single_deal_post(retry, plat, seen, prefer_ranked=True, recent_urls=recent_urls, want_format=want_format)
     if not post:
         log.info("deal slot %s: no fresh %s deal after ranking", task.get("id"), kind)
         return None
