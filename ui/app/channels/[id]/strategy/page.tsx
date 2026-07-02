@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { Strategy } from "@/lib/types";
-import { Badge, EmptyState, ErrorBox, Pagination, PageHeader, Section, Spinner, Stat } from "@/components/ui";
+import { Badge, EmptyState, ErrorBox, Pagination, PageHeader, Section, Spinner, Stat, Tabs } from "@/components/ui";
 import { Donut } from "@/components/charts";
 
 const PER_PAGE = 8;
@@ -15,6 +15,7 @@ export default function StrategyPage() {
   const [error, setError] = useState("");
   const [notFound, setNotFound] = useState(false);
   const [page, setPage] = useState(0);
+  const [tab, setTab] = useState("");
 
   useEffect(() => {
     api.strategy(id).then(setData).catch((e) => {
@@ -43,6 +44,17 @@ export default function StrategyPage() {
     ? `${timing.window[0]}:00–${(timing.window[1] + 1) % 24 || 24}:00`
     : (timing?.peak_hours || []).map((h) => `${String(h).padStart(2, "0")}:00`).join(", ") || "—";
 
+  // Build the tab set from whatever data is present; each section is its own tab.
+  const ci = data.competitor_intelligence;
+  const hasCI = !!ci && ((ci.opportunities?.length || 0) + (ci.content_gaps?.length || 0) + (ci.emerging_trends?.length || 0) > 0);
+  const tabDefs = [
+    (profile || (data.primary_topics?.length || 0) > 0) && { key: "overview", label: "Overview" },
+    tasks.length > 0 && { key: "plan", label: `Execution plan (${tasks.length})` },
+    hasCI && { key: "competitors", label: "Competitors" },
+    (data.growth_tactics?.length || 0) > 0 && { key: "why", label: "Why this plan" },
+  ].filter(Boolean) as { key: string; label: string }[];
+  const active = tab && tabDefs.some((t) => t.key === tab) ? tab : (tabDefs[0]?.key || "overview");
+
   return (
     <div>
       <PageHeader title="Strategy" subtitle={data.goal || "The agent's executable plan for this channel."}
@@ -55,33 +67,40 @@ export default function StrategyPage() {
         <Stat label="Target ER" value={b?.target_er != null ? `${b.target_er}%` : "—"} />
       </div>
 
-      {profile && (
+      {tabDefs.length > 0 && (
         <div className="mt-6">
-          <Section title={`Inferred strategy — ${profile.planner === "dense" ? "dense (high-volume)" : "curated"} profile`}
-            desc={profile.rationale}>
-            <div className="grid gap-4 lg:grid-cols-3">
-              <div className="grid grid-cols-1 gap-3">
-                <Stat label="Cadence" value={`${profile.posts_per_day ?? "—"} / day`} />
-                <Stat label="Timing" value={window} />
-              </div>
-              {contentMix.length > 0 && (
-                <div><p className="mb-2 text-xs font-medium uppercase text-slate-400">Content mix</p><Donut data={contentMix} nameKey="name" valueKey="value" height={180} /></div>
-              )}
-              {mediaMix.length > 0 && (
-                <div><p className="mb-2 text-xs font-medium uppercase text-slate-400">Media mix</p><Donut data={mediaMix} nameKey="name" valueKey="value" height={180} /></div>
-              )}
-            </div>
-          </Section>
+          <Tabs tabs={tabDefs} active={active} onChange={setTab} />
         </div>
       )}
 
-      {(data.primary_topics?.length || 0) > 0 && (
-        <div className="mt-4"><Section title="Focus topics">
-          <div className="flex flex-wrap gap-2">{data.primary_topics!.map((t) => <Badge key={t} tone="green">{t}</Badge>)}</div>
-        </Section></div>
+      {active === "overview" && (
+        <div className="mt-4 space-y-4">
+          {profile && (
+            <Section title={`Inferred strategy — ${profile.planner === "dense" ? "dense (high-volume)" : "curated"} profile`}
+              desc={profile.rationale}>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3">
+                  <Stat label="Cadence" value={`${profile.posts_per_day ?? "—"} / day`} />
+                  <Stat label="Timing" value={window} />
+                </div>
+                {contentMix.length > 0 && (
+                  <div><p className="mb-2 text-xs font-medium uppercase text-slate-400">Content mix</p><Donut data={contentMix} nameKey="name" valueKey="value" height={180} /></div>
+                )}
+                {mediaMix.length > 0 && (
+                  <div><p className="mb-2 text-xs font-medium uppercase text-slate-400">Media mix</p><Donut data={mediaMix} nameKey="name" valueKey="value" height={180} /></div>
+                )}
+              </div>
+            </Section>
+          )}
+          {(data.primary_topics?.length || 0) > 0 && (
+            <Section title="Focus topics">
+              <div className="flex flex-wrap gap-2">{data.primary_topics!.map((t) => <Badge key={t} tone="green">{t}</Badge>)}</div>
+            </Section>
+          )}
+        </div>
       )}
 
-      {tasks.length > 0 && (
+      {active === "plan" && tasks.length > 0 && (
         <div className="mt-4">
           <Section title={`Execution plan — ${tasks.length} slots`}
             desc="Each slot is scraped ~15–20 min before its time, captioned, then queued. Every slot has an evidence-based reason.">
@@ -110,26 +129,26 @@ export default function StrategyPage() {
         </div>
       )}
 
-      {data.competitor_intelligence && (
+      {active === "competitors" && hasCI && (
         <div className="mt-4"><Section title="Competitor intelligence" desc="Facts guiding the plan (never copied)">
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
               <p className="mb-1 text-xs font-medium uppercase text-slate-400">Opportunities</p>
-              <ul className="space-y-1 text-sm text-slate-600">{(data.competitor_intelligence.opportunities || []).slice(0, 5).map((o, i) => <li key={i}>• {o}</li>)}</ul>
+              <ul className="space-y-1 text-sm text-slate-600">{(ci!.opportunities || []).slice(0, 5).map((o, i) => <li key={i}>• {o}</li>)}</ul>
             </div>
             <div>
               <p className="mb-1 text-xs font-medium uppercase text-slate-400">Content gaps</p>
-              <div className="flex flex-wrap gap-1">{(data.competitor_intelligence.content_gaps || []).slice(0, 8).map((g) => <Badge key={g}>{g}</Badge>)}</div>
+              <div className="flex flex-wrap gap-1">{(ci!.content_gaps || []).slice(0, 8).map((g) => <Badge key={g}>{g}</Badge>)}</div>
             </div>
             <div>
               <p className="mb-1 text-xs font-medium uppercase text-slate-400">Emerging trends</p>
-              <div className="flex flex-wrap gap-1">{(data.competitor_intelligence.emerging_trends || []).slice(0, 8).map((g) => <Badge key={g} tone="green">{g}</Badge>)}</div>
+              <div className="flex flex-wrap gap-1">{(ci!.emerging_trends || []).slice(0, 8).map((g) => <Badge key={g} tone="green">{g}</Badge>)}</div>
             </div>
           </div>
         </Section></div>
       )}
 
-      {(data.growth_tactics?.length || 0) > 0 && (
+      {active === "why" && (data.growth_tactics?.length || 0) > 0 && (
         <div className="mt-4"><Section title="Why this plan — diagnosis & actions">
           <ul className="space-y-3">
             {data.growth_tactics!.map((g, i) => (
