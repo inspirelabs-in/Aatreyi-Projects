@@ -452,9 +452,16 @@ async def get_intelligence(session: AsyncSession, channel_id: str) -> dict:
             .order_by(AnalyticsSnapshot.created_at.desc()).limit(40)
         )
     ).scalars().all()
-    # pick the richest real window (most posts analyzed); fall back to latest
+    # Show the LATEST snapshot with a MEANINGFUL sample (recent is already ordered
+    # created_at desc). Picking "most posts_analyzed" instead made the page stick
+    # permanently on a big monthly snapshot (e.g. 500 posts) so it never changed
+    # when newer daily runs produced fresher numbers. The >=10 floor skips a thin
+    # partial-day window (e.g. 2 posts) so the numbers stay both fresh and useful.
     with_intel = [s for s in recent if (s.intelligence or {}).get("posts_analyzed")]
-    snap = max(with_intel, key=lambda s: s.intelligence["posts_analyzed"], default=(recent[0] if recent else None))
+    snap = (
+        next((s for s in with_intel if s.intelligence["posts_analyzed"] >= 10), None)
+        or (with_intel[0] if with_intel else (recent[0] if recent else None))
+    )
     intel = (snap.intelligence if snap else None) or {}
     strat = (
         await session.execute(
