@@ -1020,6 +1020,15 @@ async def generate_loot_intro(strategy_context: dict | None = None,
         return None
     from tools.strategy_context import strategy_context_prompt
     ctx_block = strategy_context_prompt(strategy_context, slot_reason)
+    # Rotate the creative angle so back-to-back posts (same context) don't converge
+    # on an identical header.
+    import random as _random
+    angle = _random.choice([
+        "lead with the savings/discount", "lead with urgency/scarcity",
+        "lead with curiosity/mystery", "lead with a bold exclamation",
+        "lead with 'handpicked/curated' framing", "lead with a fear-of-missing-out hook",
+        "lead with excitement about fresh drops", "lead with a playful, fun tone",
+    ])
     system = ("You write ORIGINAL, catchy copy for a broadcast Telegram DEALS/LOOT channel. "
               "A loot post lists many discounted products under category headings; you only write "
               "the top HEADER line and a short closing OUTRO line. Vary the wording every time — "
@@ -1027,9 +1036,9 @@ async def generate_loot_intro(strategy_context: dict | None = None,
               "audience anything (they can't reply) and never write a URL. Output STRICT JSON: "
               "{\"header\": <one line>, \"outro\": <one short line>}.")
     user = (f"{ctx_block}\n"
-            "Write a FRESH header + outro for today's loot deals compilation. Match the channel's "
-            "tone and the competitors' energy, but original copy — do NOT copy any competitor text. "
-            "Return ONLY the JSON.")
+            f"Write a FRESH header + outro for today's loot deals compilation. This time, {angle}. "
+            "Match the channel's tone and the competitors' energy, but original copy — do NOT copy "
+            "any competitor text. Return ONLY the JSON.")
     try:
         raw = await chat_complete(system, user, max_tokens=120, temperature=0.9)
         import json as _json
